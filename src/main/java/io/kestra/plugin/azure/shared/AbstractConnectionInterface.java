@@ -1,0 +1,11 @@
+package io.kestra.plugin.azure.shared;
+
+import io.kestra.core.models.property.Property;
+import io.swagger.v3.oas.annotations.media.Schema;
+
+public interface AbstractConnectionInterface {
+    @Schema(
+        title = "The blob service endpoint."
+    )
+    Property<String> getEndpoint();
+}
