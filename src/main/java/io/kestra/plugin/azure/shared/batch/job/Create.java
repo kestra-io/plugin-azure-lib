@@ -1,0 +1,345 @@
+package io.kestra.plugin.azure.shared.batch.job;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.microsoft.azure.PagedList;
+import com.microsoft.azure.batch.BatchClient;
+import com.microsoft.azure.batch.DetailLevel;
+import com.microsoft.azure.batch.protocol.models.*;
+import io.kestra.core.exceptions.IllegalVariableEvaluationException;
+import io.kestra.core.models.annotations.PluginProperty;
+import io.kestra.core.models.executions.metrics.Counter;
+import io.kestra.core.models.executions.metrics.Timer;
+import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.RunnableTask;
+import io.kestra.core.models.tasks.runners.AbstractLogConsumer;
+import io.kestra.core.models.tasks.runners.DefaultLogConsumer;
+import io.kestra.core.models.tasks.runners.RemoteRunnerInterface;
+import io.kestra.core.models.tasks.runners.ScriptService;
+import io.kestra.core.runners.RunContext;
+import io.kestra.plugin.azure.shared.batch.AbstractBatch;
+import io.kestra.plugin.azure.shared.batch.BatchService;
+import io.kestra.plugin.azure.shared.batch.models.Job;
+import io.kestra.plugin.azure.shared.batch.models.Task;
+import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.constraints.NotNull;
+import lombok.*;
+import lombok.experimental.SuperBuilder;
+import org.slf4j.Logger;
+
+import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static io.kestra.core.utils.Rethrow.throwRunnable;
+
+@SuperBuilder
+@ToString
+@EqualsAndHashCode
+@Getter
+@NoArgsConstructor
+public class Create extends AbstractBatch implements RunnableTask<Create.Output>, RemoteRunnerInterface {
+
+    public static final String DIRECTORY_MARKER = ".kestradirectory";
+
+    @Schema(
+        title = "The ID of the pool."
+    )
+    @NotNull
+    private Property<String> poolId;
+
+    @Schema(
+        title = "The job to create."
+    )
+    @PluginProperty(dynamic = true)
+    @NotNull
+    private Job job;
+
+    @Schema(
+        title = "The list of tasks to be run."
+    )
+    @PluginProperty
+    @NotNull
+    private List<Task> tasks;
+
+    @Schema(
+        title = "The maximum total wait duration.",
+        description = "If null, there is no timeout and the task is delegated to Azure Batch."
+    )
+    private Property<Duration> maxDuration;
+
+    @Builder.Default
+    private Property<Boolean> syncWorkingDirectory = Property.ofValue(false);
+
+    @Schema(
+        title = "The frequency with which the task checks whether the job is completed."
+    )
+    @Builder.Default
+    private final Property<Duration> completionCheckInterval = Property.ofValue(Duration.ofSeconds(1));
+
+    @Schema(
+        title = "Whether the job should be deleted upon completion.",
+        description = "Warning, if the job is not deleted, a retry of the task could resume an old failed attempt of the job."
+    )
+    @NotNull
+    @Builder.Default
+    private final Property<Boolean> delete = Property.ofValue(true);
+
+    @Schema(
+        title = "Whether to reconnect to the current job if it already exists."
+    )
+    @NotNull
+    @Builder.Default
+    private final Property<Boolean> resume = Property.ofValue(true);
+
+    @JsonIgnore
+    private AbstractLogConsumer logConsumer;
+
+    @JsonIgnore
+    @Builder.Default
+    private Boolean pushOutputFilesToInternalStorage = true;
+
+    @JsonIgnore
+    @Builder.Default
+    @Getter(AccessLevel.NONE)
+    private AtomicReference<Runnable> killable = new AtomicReference<>();
+
+    @JsonIgnore
+    @Builder.Default
+    @Getter(AccessLevel.NONE)
+    private final AtomicBoolean isKilled = new AtomicBoolean(false);
+
+    @Override
+    public Output run(RunContext runContext) throws Exception {
+        if (logConsumer == null) {
+            logConsumer = new DefaultLogConsumer(runContext);
+        }
+
+        Logger logger = runContext.logger();
+        BatchClient client = BatchService.client(this.endpoint, this.account, this.accessKey, runContext);
+
+        Map<String, Integer> tasksMapping = new HashMap<>();
+        String jobId = null;
+        if (Boolean.TRUE.equals(runContext.render(resume).as(Boolean.class).orElseThrow())) {
+            String baseJobName = ScriptService.jobName(runContext);
+            baseJobName = baseJobName.substring(0, baseJobName.lastIndexOf('-') + 1);
+            var cloudJob = BatchService.getExistingJob(runContext, client, baseJobName);
+            if (cloudJob.isPresent()) {
+                jobId = cloudJob.get().id();
+                logger.info("Job is resumed from an already running job {} ", jobId);
+
+                // re-create the task mapping
+                int index = 0;
+                var existingTasks = client.taskOperations().listTasks(jobId).stream().toList();
+                for (CloudTask current : existingTasks) {
+                    tasksMapping.put(current.id(), index);
+                    index++;
+                }
+            }
+        }
+
+        try {
+            if (jobId == null) {
+                // create job
+                PoolInformation poolInfo = new PoolInformation()
+                    .withPoolId(runContext.render(poolId).as(String.class).orElseThrow());
+
+                final JobAddParameter job = this.job.to(runContext, poolInfo);
+                jobId = job.id();
+                client.jobOperations().createJob(job);
+
+                logger.info("Job '{}' created on pool '{}'", jobId, poolInfo.poolId());
+
+                // create tasks
+                List<TaskAddParameter> tasks = new ArrayList<>();
+                int index = 0;
+                for (Task current : this.tasks) {
+                    TaskAddParameter taskAddParameter = current.to(runContext);
+
+                    tasksMapping.put(taskAddParameter.id(), index);
+                    tasks.add(taskAddParameter);
+
+                    index++;
+                }
+
+                if (logger.isDebugEnabled()) {
+                    tasks
+                        .forEach(task -> logger.debug("Starting task '{}' with command: {}", task.id(), task.commandLine()));
+                }
+
+                client.taskOperations().createTasks(jobId, tasks);
+            }
+
+            String finalJobId = jobId;
+            this.killable.set(throwRunnable(() -> safelyKillJobTask(runContext, client, finalJobId)));
+
+            TaskService.waitForTasksToComplete(
+                runContext,
+                client,
+                jobId,
+                runContext.render(maxDuration).as(Duration.class).orElse(null),
+                runContext.render(completionCheckInterval).as(Duration.class).orElseThrow()
+            );
+
+            // get tasks result
+            List<CloudTask> results = client.taskOperations().listTasks(jobId);
+
+            // failed ?
+            List<CloudTask> failed = results.stream()
+                .filter(cloudTask -> cloudTask.executionInfo().failureInfo() != null)
+                .toList();
+
+            // populate results
+            Map<String, Object> outputs = new ConcurrentHashMap<>();
+            Map<String, URI> outputFiles = new ConcurrentHashMap<>();
+
+            for (CloudTask task : results) {
+                if (task.executionInfo().failureInfo() != null) {
+                    logger.warn("Task '{}' failed with exit code '{}': {}", task.id(), task.executionInfo().exitCode(), task.executionInfo().failureInfo().message());
+                } else {
+                    logger.info("Task ended '{}' with exit code '{}'", task.id(), task.executionInfo().exitCode());
+                }
+
+                // metrics
+                if (task.stats() != null) {
+                    runContext.metric(Counter.of("io.read.ops.count", task.stats().readIOps()));
+                    runContext.metric(Counter.of("io.read.gib.count", task.stats().readIOGiB()));
+                    runContext.metric(Counter.of("io.write.ops.count", task.stats().writeIOps()));
+                    runContext.metric(Counter.of("io.write.gib.count", task.stats().writeIOGiB()));
+                    runContext.metric(Timer.of("cpu.kernel.duration", Duration.ofMillis(task.stats().kernelCPUTime().getMillis())));
+                    runContext.metric(Timer.of("cpu.user.duration", Duration.ofMillis(task.stats().userCPUTime().getMillis())));
+                    runContext.metric(Timer.of("wall.clock.duration", Duration.ofMillis(task.stats().wallClockTime().getMillis())));
+                }
+
+                // log
+                TaskService.readRemoteLog(runContext, client, jobId, task, "stdout.txt", msg -> {
+                    logConsumer.accept(msg, false);
+                    outputs.putAll(logConsumer.getOutputs());
+                });
+
+                TaskService.readRemoteLog(runContext, client, jobId, task, "stderr.txt", msg -> {
+                    logConsumer.accept(msg, true);
+                    outputs.putAll(logConsumer.getOutputs());
+                });
+
+                if (task.executionInfo().failureInfo() != null) {
+                    continue;
+                }
+
+                // outputsFiles
+                Task currentTask = this.tasks.get(tasksMapping.get(task.id()));
+                String remoteWorkingDir = "wd/";
+                if (currentTask.getOutputFiles() != null) {
+                    for (String s : runContext.render(currentTask.getOutputFiles()).asList(String.class)) {
+                        File file = TaskService.readRemoteFile(runContext, client, jobId, task, remoteWorkingDir + s, s, true);
+
+                        // As this task is used in the task runner, this processing is already done by the CommandsWrapper so we need some guard
+                        if (pushOutputFilesToInternalStorage) {
+                            outputFiles.put(s, runContext.storage().putFile(file));
+                        }
+                    }
+                }
+
+                List<String> renderedOutputDirs = runContext.render(currentTask.getOutputDirs()).asList(String.class);
+                boolean renderedSyncWorkingDirectory = runContext.render(syncWorkingDirectory).as(Boolean.class).orElseThrow();
+                // If we need to sync working directory or have output directories, we need to list all remote files to know which files we are interested in
+                if (renderedSyncWorkingDirectory || !renderedOutputDirs.isEmpty()) {
+                    PagedList<NodeFile> nodeFiles = client.fileOperations()
+                        .listFilesFromTask(jobId, task.id(), true, new DetailLevel.Builder().build());
+
+                    for (NodeFile nodeFile : nodeFiles) {
+                        // Filter out directories and files not in the working directory
+                        if (!nodeFile.name().startsWith(remoteWorkingDir) || nodeFile.isDirectory() || nodeFile.name().endsWith("/" + DIRECTORY_MARKER)) {
+                            continue;
+                        }
+
+                        // We check if the file is in one of the output directories to know if we should push it to outputFiles later on
+                        Optional<String> parentOutputDirectory = renderedOutputDirs.stream()
+                            .filter(s -> nodeFile.name().startsWith(remoteWorkingDir + s + "/"))
+                            .findFirst();
+                        if (parentOutputDirectory.isPresent() || renderedSyncWorkingDirectory) {
+                            String relativeFileName = nodeFile.name().substring(remoteWorkingDir.length());
+
+                            // This will download the file to runContext wdir so it will already perform the syncWorkingDirectory
+                            File file = TaskService.readRemoteFile(runContext, client, jobId, task, nodeFile.name(), relativeFileName, true);
+
+                            // We only push the file to outputFiles if it's in one of the output directories
+                            if (parentOutputDirectory.isPresent() && pushOutputFilesToInternalStorage) {
+                                outputFiles.put(relativeFileName.substring((parentOutputDirectory.get() + "/").length()), runContext.storage().putFile(file));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!failed.isEmpty()) {
+                throw new Exception(failed.size() + "/" + this.tasks.size() + " task(s) failed, terminating!");
+            }
+
+            return Output
+                .builder()
+                .vars(outputs)
+                .outputFiles(outputFiles)
+                .build();
+        } catch (BatchErrorException e) {
+            if (e.body() != null) {
+                logger.error("Code '{}', Message '{}'", e.body().code(), e.body().message().value());
+                if (e.body().values() != null) {
+                    for (BatchErrorDetail detail : e.body().values()) {
+                        logger.warn("Detail '{}'='{}'", detail.key(), detail.value());
+                    }
+                }
+            }
+
+            throw new Exception(e.toString(), e);
+        } finally {
+            kill();
+        }
+    }
+
+    private void safelyKillJobTask(final RunContext runContext,
+                                   final BatchClient client,
+                                   final String jobId) throws IllegalVariableEvaluationException {
+        if (runContext.render(delete).as(Boolean.class).orElse(true)) {
+            try {
+                client.jobOperations().deleteJob(jobId);
+                runContext.logger().debug("Job deleted: {}", jobId);
+            } catch (IOException e) {
+                runContext.logger().warn("Failed to delete job: {}.", jobId, e);
+            }
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     **/
+    @Override
+    public void kill() {
+        if (isKilled.compareAndSet(false, true)) {
+            Runnable runnable = killable.get();
+            if (runnable != null) {
+                runnable.run();
+            }
+        }
+    }
+
+    @SuperBuilder
+    @Getter
+    @NoArgsConstructor
+    public static class Output implements io.kestra.core.models.tasks.Output {
+        @Schema(
+            title = "The values from the output of the commands."
+        )
+        private Map<String, Object> vars;
+
+        @Schema(
+            title = "The output files' URIs in Kestra's internal storage."
+        )
+        @PluginProperty(additionalProperties = URI.class)
+        private Map<String, URI> outputFiles;
+    }
+}
