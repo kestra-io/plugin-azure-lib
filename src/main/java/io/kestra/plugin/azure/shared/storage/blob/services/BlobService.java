@@ -41,7 +41,7 @@ public class BlobService {
             blobItems = client.listBlobs(listBlobsOptions, Duration.ofSeconds(30));
         }
 
-        var filter = runContext.render(list.getFilter()).as(ListInterface.Filter.class).orElse(null);
+        var filter = runContext.render(list.getFilter()).as(ListInterface.Filter.class).orElseThrow();
         return blobItems
                 .stream()
                 .filter(blob -> BlobService.filter(blob, regExp, filter))
@@ -49,12 +49,20 @@ public class BlobService {
                 .collect(Collectors.toList());
     }
 
+    private static String getContentType(BlobItem object) {
+        try {
+            return object.getProperties().getContentType();
+        } catch (NullPointerException e) {
+            return null;
+        }
+    }
+
     private static boolean filter(BlobItem object, String regExp, ListInterface.Filter filter) {
         return (regExp == null || object.getName().matches(regExp)) &&
                 (
                         (filter == ListInterface.Filter.BOTH) ||
-                                (filter == ListInterface.Filter.DIRECTORY && object.getProperties().getContentType() == null) ||
-                                (filter == ListInterface.Filter.FILES && object.getProperties().getContentType() != null)
+                                (filter == ListInterface.Filter.DIRECTORY && object.getProperties() != null && getContentType(object) == null) ||
+                                (filter == ListInterface.Filter.FILES && object.getProperties() != null && getContentType(object) != null)
                 );
     }
 
