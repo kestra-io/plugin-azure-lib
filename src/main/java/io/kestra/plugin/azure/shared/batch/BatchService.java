@@ -27,7 +27,9 @@ public class BatchService {
 
     public static Optional<CloudJob> getExistingJob(RunContext runContext, BatchClient client, String baseJobName) throws IOException {
         var listJobsResponse = client.jobOperations().listJobs(new DetailLevel.Builder().withFilterClause("startswith(id, '" + baseJobName + "')").build());
-        return listJobsResponse.stream().filter(cloudJob -> hasAllLabels(runContext, cloudJob.metadata())).findFirst();
+        return listJobsResponse.stream()
+            .filter(cloudJob -> hasAllLabels(runContext, cloudJob.metadata()))
+            .min((cloudJob1, cloudJob2) -> -cloudJob1.creationTime().compareTo(cloudJob2.creationTime()));
     }
 
     private static boolean hasAllLabels(RunContext runContext, List<MetadataItem> metadata) {
