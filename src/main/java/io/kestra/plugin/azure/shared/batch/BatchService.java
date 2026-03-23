@@ -12,6 +12,7 @@ import io.kestra.core.runners.RunContext;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -31,8 +32,10 @@ public class BatchService {
 
     private static boolean hasAllLabels(RunContext runContext, List<MetadataItem> metadata) {
         Map<String, String> labels = ScriptService.labels(runContext, "kestra-", true, true);
+        var resumeLabel = new HashMap<>(labels);
+        resumeLabel.remove("kestra-taskrun-attempt"); // job resubmission will create a new attempt
         for (MetadataItem metadataItem : metadata) {
-            String value = labels.get(metadataItem.name());
+            String value = resumeLabel.get(metadataItem.name());
             if (value == null || !value.equals(metadataItem.value())) {
                 return false;
             }
