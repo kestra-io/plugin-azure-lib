@@ -21,6 +21,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import io.kestra.core.models.annotations.PluginProperty;
 
 /**
  * Base class for Azure tasks that authenticate via Azure AD service principal or default credential chain.
@@ -34,24 +35,28 @@ import java.nio.charset.StandardCharsets;
 public abstract class AbstractAzureIdentityConnection extends Task implements AzureIdentityConnectionInterface {
     @NotNull
     @Schema(title = "Azure AD tenant ID (GUID)")
+    @PluginProperty(group = "main")
     protected Property<String> tenantId;
 
     @Schema(
         title = "Client ID of the Azure AD application",
         description = "Application (client) ID used for service principal authentication."
     )
+    @PluginProperty(group = "connection")
     protected Property<String> clientId;
 
     @Schema(
         title = "Client secret for the Azure AD application",
         description = "Secret value associated with the client ID; store in a Kestra secret."
     )
+    @PluginProperty(group = "connection")
     protected Property<String> clientSecret;
 
     @Schema(
         title = "PEM-encoded certificate content for client authentication",
         description = "PEM text for certificate-based auth; alternative to clientSecret."
     )
+    @PluginProperty(group = "advanced")
     protected Property<String> pemCertificate;
 
     public TokenCredential credentials(RunContext runContext) throws IllegalVariableEvaluationException {

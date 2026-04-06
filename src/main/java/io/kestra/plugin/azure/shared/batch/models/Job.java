@@ -23,7 +23,7 @@ public class Job {
         title = "Job ID",
         description = "Unique within the Batch account (<=64 chars, alphanumeric, hyphen, underscore); case-insensitive uniqueness"
     )
-    @PluginProperty(dynamic = true)
+    @PluginProperty(dynamic = true, group = "main")
     @NotNull
     @Size(max = 64)
     private String id;
@@ -32,7 +32,7 @@ public class Job {
         title = "Display name",
         description = "Optional friendly name (up to 1024 Unicode chars); not required to be unique"
     )
-    @PluginProperty(dynamic = true)
+    @PluginProperty(dynamic = true, group = "advanced")
     @Size(max = 1024)
     private String displayName;
 
@@ -40,18 +40,21 @@ public class Job {
         title = "Job priority",
         description = "Integer from -1000 to 1000; defaults to 0"
     )
+    @PluginProperty(group = "advanced")
     private Property<Integer> priority;
 
     @Schema(
         title = "Max parallel tasks",
         description = "Set to -1 for unlimited (default) or a positive integer; controls concurrent task scheduling"
     )
+    @PluginProperty(group = "execution")
     private Property<Integer> maxParallelTasks;
 
     @Schema(
         title = "Job labels",
         description = "Key/value metadata applied to the job"
     )
+    @PluginProperty(group = "advanced")
     private Property<Map<String, String>> labels;
 
     public JobAddParameter to(RunContext runContext, PoolInformation poolInformation) throws IllegalVariableEvaluationException {

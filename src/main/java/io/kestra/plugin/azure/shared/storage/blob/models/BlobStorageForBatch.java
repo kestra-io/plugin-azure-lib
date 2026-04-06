@@ -14,6 +14,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
+import io.kestra.core.models.annotations.PluginProperty;
 
 @SuperBuilder
 @ToString
@@ -31,6 +32,7 @@ public class BlobStorageForBatch implements AzureClientInterface, AbstractConnec
         description = "Mandatory if you want to use `namespaceFiles`, `inputFiles` or `outputFiles` properties."
     )
     @NotNull
+    @PluginProperty(group = "main")
     private Property<String> containerName;
 
     public boolean valid() {

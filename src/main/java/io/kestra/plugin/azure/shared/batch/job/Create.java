@@ -50,19 +50,20 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
         title = "The ID of the pool."
     )
     @NotNull
+    @PluginProperty(group = "main")
     private Property<String> poolId;
 
     @Schema(
         title = "The job to create."
     )
-    @PluginProperty(dynamic = true)
+    @PluginProperty(dynamic = true, group = "main")
     @NotNull
     private Job job;
 
     @Schema(
         title = "The list of tasks to be run."
     )
-    @PluginProperty
+    @PluginProperty(group = "main")
     @NotNull
     private List<Task> tasks;
 
@@ -70,6 +71,7 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
         title = "The maximum total wait duration.",
         description = "If null, there is no timeout and the task is delegated to Azure Batch."
     )
+    @PluginProperty(group = "execution")
     private Property<Duration> maxDuration;
 
     @Builder.Default
@@ -79,6 +81,7 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
         title = "The frequency with which the task checks whether the job is completed."
     )
     @Builder.Default
+    @PluginProperty(group = "advanced")
     private final Property<Duration> completionCheckInterval = Property.ofValue(Duration.ofSeconds(1));
 
     @Schema(
@@ -87,6 +90,7 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
     )
     @NotNull
     @Builder.Default
+    @PluginProperty(group = "main")
     private final Property<Boolean> delete = Property.ofValue(true);
 
     @Schema(
@@ -94,6 +98,7 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
     )
     @NotNull
     @Builder.Default
+    @PluginProperty(group = "main")
     private final Property<Boolean> resume = Property.ofValue(true);
 
     @JsonIgnore
