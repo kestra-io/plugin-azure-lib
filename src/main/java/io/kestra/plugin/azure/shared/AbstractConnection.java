@@ -9,6 +9,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 import lombok.experimental.SuperBuilder;
+import io.kestra.core.models.annotations.PluginProperty;
 
 @SuperBuilder
 @ToString
@@ -21,5 +22,6 @@ public abstract class AbstractConnection extends Task implements AbstractConnect
         title = "Service endpoint URL",
         description = "Base HTTPS endpoint of the target service."
     )
+    @PluginProperty(group = "main")
     protected Property<String> endpoint;
 }

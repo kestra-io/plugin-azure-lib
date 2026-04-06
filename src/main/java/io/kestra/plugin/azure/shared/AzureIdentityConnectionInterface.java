@@ -2,6 +2,7 @@ package io.kestra.plugin.azure.shared;
 
 import io.kestra.core.models.property.Property;
 import io.swagger.v3.oas.annotations.media.Schema;
+import io.kestra.core.models.annotations.PluginProperty;
 
 public interface AzureIdentityConnectionInterface {
     @Schema(
@@ -11,6 +12,7 @@ public interface AzureIdentityConnectionInterface {
                 If you don't have a service principal, refer to [create a service principal with Azure CLI](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1?tabs=bash).
                 """
     )
+    @PluginProperty(group = "connection")
     Property<String> getClientId();
 
     @Schema(
@@ -20,6 +22,7 @@ public interface AzureIdentityConnectionInterface {
                 The tenantId, clientId and clientSecret of the service principal are required for this credential to acquire an access token.
                 """
     )
+    @PluginProperty(group = "connection")
     Property<String> getClientSecret();
 
     @Schema(
@@ -29,8 +32,10 @@ public interface AzureIdentityConnectionInterface {
             The tenantId, clientId and clientCertificate of the service principal are required for this credential to acquire an access token.
             """
     )
+    @PluginProperty(group = "advanced")
     Property<String> getPemCertificate();
 
     @Schema(title = "Tenant ID")
+    @PluginProperty(group = "connection")
     Property<String> getTenantId();
 }
