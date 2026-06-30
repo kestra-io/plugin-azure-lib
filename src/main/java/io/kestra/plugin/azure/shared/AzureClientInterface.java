@@ -12,7 +12,7 @@ public interface AzureClientInterface {
     @Schema(
         title = "Connection string of the Storage Account."
     )
-    @PluginProperty(group = "connection")
+    @PluginProperty(secret = true, group = "connection")
     Property<String> getConnectionString();
 
     @Schema(
@@ -24,6 +24,6 @@ public interface AzureClientInterface {
     @Schema(
         title = "Shared Key access key for authenticating requests."
     )
-    @PluginProperty(group = "connection")
+    @PluginProperty(secret = true, group = "connection")
     Property<String> getSharedKeyAccountAccessKey();
 }

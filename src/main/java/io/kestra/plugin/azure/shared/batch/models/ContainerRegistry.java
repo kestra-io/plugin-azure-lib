@@ -18,9 +18,13 @@ public class ContainerRegistry {
     Property<String> registryServer;
 
     @Schema(title = "Registry username")
+    @PluginProperty(secret = true)
+    @ToString.Exclude
     Property<String> userName;
 
     @Schema(title = "Registry password")
+    @PluginProperty(secret = true)
+    @ToString.Exclude
     Property<String> password;
 
     @Schema(
