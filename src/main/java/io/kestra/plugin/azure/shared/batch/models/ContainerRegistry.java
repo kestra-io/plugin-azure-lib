@@ -6,6 +6,7 @@ import io.kestra.core.models.property.Property;
 import io.kestra.core.runners.RunContext;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
+import lombok.ToString;
 import lombok.Value;
 
 @Builder
