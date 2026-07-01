@@ -23,8 +23,12 @@ import io.kestra.core.models.annotations.PluginProperty;
 @NoArgsConstructor
 public class BlobStorageForBatch implements AzureClientInterface, AbstractConnectionInterface {
     protected Property<String> endpoint;
+    @PluginProperty(secret = true)
+    @ToString.Exclude
     protected Property<String> connectionString;
     protected Property<String> sharedKeyAccountName;
+    @PluginProperty(secret = true)
+    @ToString.Exclude
     protected Property<String> sharedKeyAccountAccessKey;
 
     @Schema(
