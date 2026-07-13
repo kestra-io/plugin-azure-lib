@@ -22,7 +22,7 @@ public interface AzureIdentityConnectionInterface {
                 The tenantId, clientId and clientSecret of the service principal are required for this credential to acquire an access token.
                 """
     )
-    @PluginProperty(group = "connection")
+    @PluginProperty(secret = true, group = "connection")
     Property<String> getClientSecret();
 
     @Schema(
@@ -32,7 +32,7 @@ public interface AzureIdentityConnectionInterface {
             The tenantId, clientId and clientCertificate of the service principal are required for this credential to acquire an access token.
             """
     )
-    @PluginProperty(group = "advanced")
+    @PluginProperty(secret = true, group = "advanced")
     Property<String> getPemCertificate();
 
     @Schema(title = "Tenant ID")

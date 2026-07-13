@@ -49,14 +49,16 @@ public abstract class AbstractAzureIdentityConnection extends Task implements Az
         title = "Client secret for the Azure AD application",
         description = "Secret value associated with the client ID; store in a Kestra secret."
     )
-    @PluginProperty(group = "connection")
+    @PluginProperty(secret = true, group = "connection")
+    @ToString.Exclude
     protected Property<String> clientSecret;
 
     @Schema(
         title = "PEM-encoded certificate content for client authentication",
         description = "PEM text for certificate-based auth; alternative to clientSecret."
     )
-    @PluginProperty(group = "advanced")
+    @PluginProperty(secret = true, group = "advanced")
+    @ToString.Exclude
     protected Property<String> pemCertificate;
 
     public TokenCredential credentials(RunContext runContext) throws IllegalVariableEvaluationException {

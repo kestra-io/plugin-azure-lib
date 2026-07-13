@@ -6,6 +6,7 @@ import io.kestra.core.models.property.Property;
 import io.kestra.core.runners.RunContext;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
+import lombok.ToString;
 import lombok.Value;
 
 @Builder
@@ -18,9 +19,13 @@ public class ContainerRegistry {
     Property<String> registryServer;
 
     @Schema(title = "Registry username")
+    @PluginProperty(secret = true)
+    @ToString.Exclude
     Property<String> userName;
 
     @Schema(title = "Registry password")
+    @PluginProperty(secret = true)
+    @ToString.Exclude
     Property<String> password;
 
     @Schema(

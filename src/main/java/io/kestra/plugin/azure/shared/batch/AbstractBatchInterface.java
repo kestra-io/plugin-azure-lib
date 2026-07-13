@@ -13,6 +13,6 @@ public interface AbstractBatchInterface {
 
     @Schema(title = "Batch account access key")
     @NotNull
-    @PluginProperty(group = "main")
+    @PluginProperty(secret = true, group = "main")
     Property<String> getAccessKey();
 }
