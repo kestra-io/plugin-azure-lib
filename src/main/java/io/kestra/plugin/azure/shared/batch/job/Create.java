@@ -74,6 +74,10 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
     @PluginProperty(group = "execution")
     private Property<Duration> maxDuration;
 
+    @Schema(
+        title = "Whether to sync the remote task working directory back to Kestra",
+        description = "When true, all files under the task working directory are downloaded to Kestra's working directory after the job completes; defaults to false."
+    )
     @Builder.Default
     private Property<Boolean> syncWorkingDirectory = Property.ofValue(false);
 

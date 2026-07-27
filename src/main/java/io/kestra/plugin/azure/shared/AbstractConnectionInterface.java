@@ -6,7 +6,8 @@ import io.kestra.core.models.annotations.PluginProperty;
 
 public interface AbstractConnectionInterface {
     @Schema(
-        title = "The blob service endpoint."
+        title = "Service endpoint URL",
+        description = "Endpoint of the target Azure service (for example the Blob Storage, Batch, or Event Hubs endpoint)."
     )
     @PluginProperty(group = "connection")
     Property<String> getEndpoint();

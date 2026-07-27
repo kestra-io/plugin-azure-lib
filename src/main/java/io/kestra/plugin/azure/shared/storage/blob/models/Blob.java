@@ -3,6 +3,7 @@ package io.kestra.plugin.azure.shared.storage.blob.models;
 import com.azure.storage.blob.BlobClient;
 import com.azure.storage.blob.models.BlobItem;
 import com.azure.storage.blob.models.BlobProperties;
+import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 import lombok.Value;
 import lombok.With;
@@ -14,11 +15,22 @@ import java.time.OffsetDateTime;
 @Value
 public class Blob {
     @With
+    @Schema(title = "The blob URI")
     URI uri;
+
+    @Schema(title = "The blob container name")
     String container;
+
+    @Schema(title = "The blob name")
     String name;
+
+    @Schema(title = "The blob size in bytes")
     Long size;
+
+    @Schema(title = "The date the blob was last modified")
     OffsetDateTime lastModified;
+
+    @Schema(title = "The blob ETag")
     String eTag;
 
     public static Blob of(BlobClient blobClient) {

@@ -28,8 +28,8 @@ public class BlobStorageForBatch implements AzureClientInterface, AbstractConnec
     protected Property<String> sharedKeyAccountAccessKey;
 
     @Schema(
-        title = "The URL of the blob container the compute node should use.",
-        description = "Mandatory if you want to use `namespaceFiles`, `inputFiles` or `outputFiles` properties."
+        title = "Name of the blob container used for file staging",
+        description = "Mandatory if you want to use the `namespaceFiles`, `inputFiles` or `outputFiles` properties."
     )
     @NotNull
     @PluginProperty(group = "main")
