@@ -15,7 +15,7 @@ public interface AbstractBlobStorageObjectInterface {
     Property<String> getContainer();
 
     @Schema(
-        title = "The full blob path on the container."
+        title = "The full path of the blob within the container."
     )
     @NotNull
     @PluginProperty(group = "main")

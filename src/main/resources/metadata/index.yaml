@@ -1,7 +1,7 @@
-group: io.kestra.plugin.template
-name: "template"
-title: "Template"
-description: "Plugin template for Kestra"
+group: io.kestra.plugin.azure
+name: "azure"
+title: "Azure"
+description: "Core library shared by Kestra's Azure plugins, providing connection, storage, and batch primitives."
 body: ""
 videos: []
 createdBy: "Kestra Core Team"
