@@ -67,7 +67,7 @@ public class TaskService {
                 return taskCollection;
             }
 
-            TimeUnit.SECONDS.sleep(completionCheckInterval.toSeconds());
+            TimeUnit.MILLISECONDS.sleep(completionCheckInterval.toMillis());
             elapsedTime = (new Date()).getTime() - startTime;
         }
 
