@@ -1,9 +1,13 @@
 package io.kestra.plugin.azure.shared.batch.job;
 
 import com.microsoft.azure.batch.BatchClient;
+import com.microsoft.azure.batch.BatchErrorCodeStrings;
 import com.microsoft.azure.batch.DetailLevel;
 import com.microsoft.azure.batch.protocol.models.BatchErrorException;
 import com.microsoft.azure.batch.protocol.models.CloudTask;
+import com.microsoft.azure.batch.protocol.models.TaskAddParameter;
+import com.microsoft.azure.batch.protocol.models.TaskAddResult;
+import com.microsoft.azure.batch.protocol.models.TaskAddStatus;
 import com.microsoft.azure.batch.protocol.models.TaskState;
 import io.kestra.core.runners.RunContext;
 import org.apache.commons.io.FileUtils;
@@ -25,6 +29,40 @@ import java.util.function.Consumer;
 import jakarta.annotation.Nullable;
 
 public class TaskService {
+    // Batch API limit for a single addtaskcollection call
+    static final int MAX_TASKS_PER_REQUEST = 100;
+
+    // Replaces TaskOperations.createTasks, whose worker pool can block forever when a chunk fails (kestra-io/plugin-ee-azure#156)
+    public static void submitTasks(BatchClient client, String jobId, List<TaskAddParameter> tasks) throws BatchErrorException {
+        for (int from = 0; from < tasks.size(); from += MAX_TASKS_PER_REQUEST) {
+            submitChunk(client, jobId, tasks.subList(from, Math.min(from + MAX_TASKS_PER_REQUEST, tasks.size())));
+        }
+    }
+
+    private static void submitChunk(BatchClient client, String jobId, List<TaskAddParameter> chunk) throws BatchErrorException {
+        List<TaskAddResult> results;
+        try {
+            results = client.protocolLayer().tasks().addCollection(jobId, chunk).value();
+        } catch (BatchErrorException e) {
+            // same fallback as the SDK: halve the chunk until the body fits
+            if (chunk.size() > 1 && e.body() != null && BatchErrorCodeStrings.RequestBodyTooLarge.equals(e.body().code())) {
+                int middle = chunk.size() / 2;
+                submitChunk(client, jobId, chunk.subList(0, middle));
+                submitChunk(client, jobId, chunk.subList(middle, chunk.size()));
+                return;
+            }
+            throw e;
+        }
+
+        for (TaskAddResult result : results) {
+            if (result.status() != TaskAddStatus.SUCCESS) {
+                String error = result.error() == null ? "unknown error" : result.error().code() +
+                    (result.error().message() == null ? "" : ": " + result.error().message().value());
+                throw new IllegalStateException("Failed to add task '" + result.taskId() + "' to job '" + jobId + "': " + error);
+            }
+        }
+    }
+
     public static List<CloudTask> waitForTasksToComplete(
         RunContext runContext,
         BatchClient client,
