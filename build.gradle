@@ -45,6 +45,8 @@ def kestraProvidedJackson = { dep ->
 configurations.all {
     // SEC-0369: platform BOM pins guava 33.4.8-jre, remove once it ships >= 33.7.2.
     resolutionStrategy.force "com.google.guava:guava:33.7.2-jre"
+    // SEC-0160: adal4j -> oauth2-oidc-sdk:6.5 caps json-smart at [1.3.1,2.3] (resource exhaustion CVEs), force >= 2.4.9.
+    resolutionStrategy.force "net.minidev:json-smart:2.5.2"
 }
 
 dependencies {
