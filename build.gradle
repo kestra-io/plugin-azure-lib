@@ -44,7 +44,9 @@ def kestraProvidedJackson = { dep ->
 
 configurations.all {
     // SEC-0369: platform BOM pins guava 33.4.8-jre, remove once it ships >= 33.7.2.
-    resolutionStrategy.force "com.google.guava:guava:33.7.2-jre"
+    resolutionStrategy.force "com.google.guava:guava:33.8.0-jre"
+    // SEC-0160: adal4j -> oauth2-oidc-sdk:6.5 caps json-smart at [1.3.1,2.3] (resource exhaustion CVEs), force >= 2.4.9.
+    resolutionStrategy.force "net.minidev:json-smart:2.6.1"
     // SEC-0206 (CVE-2021-0341): azure-batch 11.2.0 -> client-runtime 1.7.14 pulls okhttp 3.12.12, fixed in >= 4.9.2.
     resolutionStrategy.force "com.squareup.okhttp3:okhttp:4.12.0", "com.squareup.okhttp3:logging-interceptor:4.12.0"
 }
