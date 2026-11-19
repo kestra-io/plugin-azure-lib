@@ -112,6 +112,22 @@ class BatchModelsTest {
     }
 
     @Test
+    void taskToBatchDoesNotRenderValuesTwice() throws Exception {
+        var runContext = runContextFactory.of(Map.of("payload", "{{ 1 + 1 }}"));
+        var task = Task.builder()
+            .id("single-render")
+            .commands(Property.ofValue(List.of("echo {{ payload }}")))
+            .environments(Property.ofValue(Map.of("{{ payload }}", "{{ payload }}")))
+            .build();
+
+        var batch = task.toBatch(runContext);
+
+        assertThat(batch.getCommandLine(), is("/bin/sh -c \"echo {{ 1 + 1 }}\""));
+        assertThat(batch.getEnvironmentSettings().getFirst().getName(), is("{{ 1 + 1 }}"));
+        assertThat(batch.getEnvironmentSettings().getFirst().getValue(), is("{{ 1 + 1 }}"));
+    }
+
+    @Test
     void minimalTaskToBatchLeavesOptionalSettingsUnset() throws Exception {
         var runContext = runContextFactory.of(Map.of());
         var task = Task.builder()

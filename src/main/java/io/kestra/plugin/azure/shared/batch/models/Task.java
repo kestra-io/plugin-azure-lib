@@ -176,7 +176,7 @@ public class Task {
     public com.azure.compute.batch.models.BatchTaskCreateParameters toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.azure.compute.batch.models.BatchTaskCreateParameters(
                 this.id == null ? IdUtils.create() : runContext.render(this.id),
-                runContext.render(this.commandLine(runContext))
+                this.commandLine(runContext)
             )
             .setDisplayName(runContext.render(this.displayName))
             .setContainerSettings(this.containerSettings == null ? null : this.containerSettings.toBatch(runContext))
