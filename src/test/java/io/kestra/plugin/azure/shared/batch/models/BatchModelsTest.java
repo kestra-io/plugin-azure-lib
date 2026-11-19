@@ -27,7 +27,7 @@ class BatchModelsTest {
     @Test
     @SuppressWarnings("deprecation")
     void taskToBatchMatchesTheLegacyConversion() throws Exception {
-        RunContext runContext = runContextFactory.of(Map.of("name", "world", "image", "python:3.12"));
+        var runContext = runContextFactory.of(Map.of("name", "world", "image", "python:3.12"));
         var identity = ComputeNodeIdentityReference.builder().resourceId(Property.ofValue("/identities/mine")).build();
         var task = Task.builder()
             .id("{{ 'task' }}-1")
@@ -113,7 +113,7 @@ class BatchModelsTest {
 
     @Test
     void minimalTaskToBatchLeavesOptionalSettingsUnset() throws Exception {
-        RunContext runContext = runContextFactory.of(Map.of());
+        var runContext = runContextFactory.of(Map.of());
         var task = Task.builder()
             .id("minimal")
             .commands(Property.ofValue(List.of("echo hi")))
@@ -132,7 +132,7 @@ class BatchModelsTest {
 
     @Test
     void jobToBatchSetsPoolAndLabels() throws Exception {
-        RunContext runContext = runContextFactory.of(Map.of("suffix", "42"));
+        var runContext = runContextFactory.of(Map.of("suffix", "42"));
         var job = Job.builder()
             .id("job-{{ suffix }}")
             .displayName("My job")

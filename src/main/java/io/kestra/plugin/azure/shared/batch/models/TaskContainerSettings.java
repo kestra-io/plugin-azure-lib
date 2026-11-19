@@ -57,7 +57,8 @@ public class TaskContainerSettings {
                 case CONTAINER_IMAGE_DEFAULT -> com.azure.compute.batch.models.ContainerWorkingDirectory.CONTAINER_IMAGE_DEFAULT;
             })
             .orElse(null);
-        return new com.azure.compute.batch.models.BatchTaskContainerSettings(runContext.render(this.imageName).as(String.class).orElseThrow())
+        return new com.azure.compute.batch.models.BatchTaskContainerSettings(runContext.render(this.imageName).as(String.class)
+            .orElseThrow(() -> new IllegalArgumentException("Container 'imageName' is required, set it to the image to run the task in")))
             .setContainerRunOptions(runContext.render(this.containerRunOptions).as(String.class).orElse(null))
             .setRegistry(this.registry != null ? this.registry.toBatch(runContext) : null)
             .setWorkingDirectory(workingDirectory);

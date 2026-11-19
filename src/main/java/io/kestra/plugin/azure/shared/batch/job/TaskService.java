@@ -24,7 +24,6 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
@@ -97,16 +96,16 @@ public class TaskService {
         @Nullable Duration timeout,
         Duration completionCheckInterval
     ) throws InterruptedException, TimeoutException {
-        long startTime = System.currentTimeMillis();
-        long elapsedTime = 0L;
-        Set<String> ended = new HashSet<>();
-        BatchTasksListOptions options = new BatchTasksListOptions().setSelect(List.of("id", "state", "executionInfo"));
+        var startTime = System.currentTimeMillis();
+        var elapsedTime = 0L;
+        var ended = new HashSet<String>();
+        var options = new BatchTasksListOptions().setSelect(List.of("id", "state", "executionInfo"));
 
         while (timeout == null || elapsedTime < timeout.toMillis()) {
-            List<BatchTask> taskCollection = client.listTasks(jobId, options).stream().toList();
+            var taskCollection = client.listTasks(jobId, options).stream().toList();
 
             boolean allComplete = true;
-            for (BatchTask task : taskCollection) {
+            for (var task : taskCollection) {
                 var executionInfo = task.getExecutionInfo();
                 if (executionInfo != null && executionInfo.getEndTime() != null && ended.add(task.getId())) {
                     if (executionInfo.getFailureInfo() != null) {
@@ -187,7 +186,7 @@ public class TaskService {
         String remoteFileName,
         @Nullable String localFileName
     ) throws IOException {
-        File file = localFile(runContext, localFileName);
+        var file = localFile(runContext, localFileName);
 
         try (
             InputStream content = client.getTaskFile(jobId, task.getId(), remoteFileName).toStream();
@@ -238,7 +237,7 @@ public class TaskService {
         String fileName,
         Consumer<String> consumer
     ) throws IOException {
-        File file = TaskService.readRemoteFile(runContext, client, jobId, task, fileName, null);
+        var file = TaskService.readRemoteFile(runContext, client, jobId, task, fileName, null);
 
         try (var lines = IOUtils.lineIterator(new FileInputStream(file), StandardCharsets.UTF_8)) {
             lines.forEachRemaining(consumer);

@@ -29,10 +29,12 @@ import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
 public class BatchService {
     // Same retry budget as BatchRetryInterceptor; azure-core retries 408, 429, 500, 502, 503 and 504 and honors Retry-After.
     private static final int MAX_RETRIES = 3;
+    private static final String ATTEMPT_LABEL = "kestra-taskrun-attempt";
 
     /**
      * Creates a client for the legacy {@code com.microsoft.azure:azure-batch} SDK.
@@ -62,10 +64,13 @@ public class BatchService {
      */
     public static com.azure.compute.batch.BatchClient batchClient(Property<String> endpoint, Property<String> account, Property<String> accessKey, RunContext runContext) throws IllegalVariableEvaluationException {
         return new BatchClientBuilder()
-            .endpoint(runContext.render(endpoint).as(String.class).orElseThrow())
+            .endpoint(runContext.render(endpoint).as(String.class)
+                .orElseThrow(() -> new IllegalArgumentException("Batch 'endpoint' is required, set it to the Batch account URL")))
             .credential(new AzureNamedKeyCredential(
-                runContext.render(account).as(String.class).orElseThrow(),
-                runContext.render(accessKey).as(String.class).orElseThrow()
+                runContext.render(account).as(String.class)
+                    .orElseThrow(() -> new IllegalArgumentException("Batch 'account' is required, set it to the Batch account name")),
+                runContext.render(accessKey).as(String.class)
+                    .orElseThrow(() -> new IllegalArgumentException("Batch 'accessKey' is required, set it to the Batch account access key"))
             ))
             .retryOptions(new RetryOptions(new ExponentialBackoffOptions().setMaxRetries(MAX_RETRIES)))
             .buildClient();
@@ -83,22 +88,31 @@ public class BatchService {
     }
 
     /**
-     * Returns the most recently created job whose id starts with {@code baseJobName} and whose metadata matches the
-     * current task run labels, ignoring the attempt label so that a retried task run can resume its job.
+     * Returns the most recently created job whose id starts with {@code baseJobName} and whose metadata holds every
+     * {@code kestra-*} label of the current task run with the same value. The attempt label is not compared, so a
+     * retried task run resumes the job of its previous attempt; other metadata, such as user labels, is ignored.
      */
     public static Optional<BatchJob> getExistingBatchJob(RunContext runContext, com.azure.compute.batch.BatchClient client, String baseJobName) {
+        var runLabels = new HashMap<>(ScriptService.labels(runContext, "kestra-", true, true));
+        runLabels.remove(ATTEMPT_LABEL);
+
         return client.listJobs(new BatchJobsListOptions().setFilter(startsWithFilter(baseJobName)))
             .stream()
-            .filter(batchJob -> hasAllLabels(runContext, toMap(batchJob.getMetadata(), BatchMetadataItem::getName, BatchMetadataItem::getValue)))
+            .filter(batchJob -> hasRunLabels(runLabels, toMap(batchJob.getMetadata(), BatchMetadataItem::getName, BatchMetadataItem::getValue)))
             .max(Comparator.comparing(BatchJob::getCreationTime, Comparator.nullsFirst(Comparator.naturalOrder())));
+    }
+
+    private static boolean hasRunLabels(Map<String, String> runLabels, Map<String, String> metadata) {
+        return runLabels.entrySet().stream()
+            .allMatch(label -> label.getValue().equals(metadata.get(label.getKey())));
     }
 
     private static String startsWithFilter(String baseJobName) {
         return "startswith(id, '" + baseJobName + "')";
     }
 
-    private static <T> Map<String, String> toMap(List<T> metadata, java.util.function.Function<T, String> name, java.util.function.Function<T, String> value) {
-        Map<String, String> map = new HashMap<>();
+    private static <T> Map<String, String> toMap(List<T> metadata, Function<T, String> name, Function<T, String> value) {
+        var map = new HashMap<String, String>();
         if (metadata != null) {
             metadata.forEach(item -> map.put(name.apply(item), value.apply(item)));
         }
@@ -108,7 +122,7 @@ public class BatchService {
     private static boolean hasAllLabels(RunContext runContext, Map<String, String> metadata) {
         Map<String, String> labels = ScriptService.labels(runContext, "kestra-", true, true);
         var resumeLabel = new HashMap<>(labels);
-        resumeLabel.remove("kestra-taskrun-attempt"); // job resubmission will create a new attempt
+        resumeLabel.remove(ATTEMPT_LABEL); // job resubmission will create a new attempt
         for (Map.Entry<String, String> metadataItem : metadata.entrySet()) {
             String value = resumeLabel.get(metadataItem.getKey());
             if (value == null || !value.equals(metadataItem.getValue())) {

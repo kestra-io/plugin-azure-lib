@@ -4,6 +4,7 @@ import com.azure.compute.batch.BatchClient;
 import com.azure.compute.batch.models.BatchErrorException;
 import com.sun.net.httpserver.HttpServer;
 import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.runners.ScriptService;
 import io.kestra.core.runners.RunContext;
 import io.kestra.core.runners.RunContextFactory;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
@@ -14,6 +15,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -75,26 +77,49 @@ class BatchServiceBatchClientTest {
     }
 
     @Test
-    void getExistingBatchJobReturnsTheLatestJobMatchingTheLabels() throws Exception {
-        var jobs = """
-            {"value": [
-              {"id": "base-old", "creationTime": "2026-01-01T00:00:00Z", "metadata": []},
-              {"id": "base-latest", "creationTime": "2026-01-03T00:00:00Z", "metadata": [
-                {"name": "kestra-flow-id", "value": "my-flow"},
-                {"name": "kestra-namespace", "value": "company.team"}
-              ]},
-              {"id": "base-other-flow", "creationTime": "2026-01-04T00:00:00Z", "metadata": [{"name": "kestra-flow-id", "value": "another"}]},
-              {"id": "base-middle", "creationTime": "2026-01-02T00:00:00Z"}
-            ]}
-            """;
-        try (var endpoint = new FakeBatchEndpoint(attempt -> new Reply(200, jobs, null))) {
+    void getExistingBatchJobReturnsTheLatestJobCarryingAllRunLabels() throws Exception {
+        try (var endpoint = new FakeBatchEndpoint(attempt -> new Reply(200, jobsJson(), null))) {
             var runContext = runContextWithTaskRun(endpoint);
+            jobs = List.of(
+                job("base-old", "2026-01-01T00:00:00Z", runLabels(runContext, Map.of())),
+                job("base-latest", "2026-01-03T00:00:00Z", runLabels(runContext, Map.of("kestra-taskrun-attempt", "0", "team", "data"))),
+                job("base-without-labels", "2026-01-04T00:00:00Z", Map.of()),
+                job("base-partial-labels", "2026-01-05T00:00:00Z", Map.of("kestra-flow-id", runLabels(runContext, Map.of()).get("kestra-flow-id"))),
+                job("base-other-execution", "2026-01-06T00:00:00Z", runLabels(runContext, Map.of("kestra-execution-id", "another")))
+            );
 
             var job = BatchService.getExistingBatchJob(runContext, client(endpoint, runContext), "base-");
 
             assertEquals("base-latest", job.orElseThrow().getId());
             assertTrue(endpoint.requests.getFirst().query().contains("$filter=startswith(id, 'base-')"));
         }
+    }
+
+    @Test
+    void getExistingBatchJobIgnoresJobsWithoutTheRunLabels() throws Exception {
+        try (var endpoint = new FakeBatchEndpoint(attempt -> new Reply(200, jobsJson(), null))) {
+            var runContext = runContextWithTaskRun(endpoint);
+            jobs = List.of(
+                job("base-without-labels", "2026-01-01T00:00:00Z", Map.of()),
+                job("base-user-labels", "2026-01-02T00:00:00Z", Map.of("team", "data"))
+            );
+
+            assertTrue(BatchService.getExistingBatchJob(runContext, client(endpoint, runContext), "base-").isEmpty());
+        }
+    }
+
+    @Test
+    void failsWithAClearMessageWhenAConnectionPropertyIsMissing() {
+        var runContext = runContextFactory.of(Map.of());
+
+        var error = assertThrows(IllegalArgumentException.class, () -> BatchService.batchClient(
+            Property.ofValue("https://account.region.batch.azure.com"),
+            null,
+            Property.ofValue("dGVzdC1rZXk="),
+            runContext
+        ));
+
+        assertTrue(error.getMessage().contains("'account' is required"));
     }
 
     @Test
@@ -112,6 +137,25 @@ class BatchServiceBatchClientTest {
 
         assertEquals(first, new DefaultJobResumeStrategy().selectBatchJob(List.of(first)).orElseThrow());
         assertTrue(new DefaultJobResumeStrategy().selectBatchJob(List.of()).isEmpty());
+    }
+
+    private volatile List<String> jobs = List.of();
+
+    private String jobsJson() {
+        return "{\"value\": [" + String.join(",", jobs) + "]}";
+    }
+
+    private static String job(String id, String creationTime, Map<String, String> metadata) {
+        var items = metadata.entrySet().stream()
+            .map(e -> "{\"name\": \"" + e.getKey() + "\", \"value\": \"" + e.getValue() + "\"}")
+            .toList();
+        return "{\"id\": \"" + id + "\", \"creationTime\": \"" + creationTime + "\", \"metadata\": [" + String.join(",", items) + "]}";
+    }
+
+    private static Map<String, String> runLabels(RunContext runContext, Map<String, String> overrides) {
+        var labels = new HashMap<>(ScriptService.labels(runContext, "kestra-", true, true));
+        labels.putAll(overrides);
+        return labels;
     }
 
     private BatchClient client(FakeBatchEndpoint endpoint) throws Exception {

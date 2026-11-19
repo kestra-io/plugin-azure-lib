@@ -186,17 +186,17 @@ public class Task {
                 .map(throwFunction(e -> new com.azure.compute.batch.models.EnvironmentSetting(runContext.render(e.getKey()))
                     .setValue(runContext.render(e.getValue()))
                 ))
-                .collect(Collectors.toList())
+                .toList()
             )
             .setResourceFiles(this.resourceFiles == null ? null : this.resourceFiles
                 .stream()
                 .map(throwFunction(s -> s.toBatch(runContext)))
-                .collect(Collectors.toList())
+                .toList()
             )
             .setOutputFiles(this.uploadFiles == null ? null : this.uploadFiles
                 .stream()
                 .map(throwFunction(s -> s.toBatch(runContext)))
-                .collect(Collectors.toList()))
+                .toList())
             .setConstraints(this.constraints == null ? null : this.constraints.toBatch(runContext))
             .setRequiredSlots(runContext.render(this.requiredSlots).as(Integer.class).orElse(null));
     }

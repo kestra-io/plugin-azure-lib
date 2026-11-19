@@ -40,38 +40,38 @@ import static org.mockito.Mockito.when;
 class TaskServiceBatchClientTest {
     @Test
     void waitsUntilAllTasksAreCompletedAndLogsEachEndOnce() throws Exception {
-        RunContext runContext = mock(RunContext.class);
-        Logger logger = mock(Logger.class);
-        BatchClient client = mock(BatchClient.class);
-        BatchTask running = task("t1", BatchTaskState.RUNNING, null, null);
-        BatchTask ended = task("t1", BatchTaskState.COMPLETED, 0, null);
-        BatchTask failed = task("t2", BatchTaskState.COMPLETED, 1, "boom");
+        var runContext = mock(RunContext.class);
+        var logger = mock(Logger.class);
+        var client = mock(BatchClient.class);
+        var running = task("t1", BatchTaskState.RUNNING, null, null);
+        var ended = task("t1", BatchTaskState.COMPLETED, 0, null);
+        var failed = task("t2", BatchTaskState.COMPLETED, 1, "boom");
 
-        PagedIterable<BatchTask> firstPoll = paged(List.of(running));
-        PagedIterable<BatchTask> secondPoll = paged(List.of(ended, failed));
+        var firstPoll = paged(List.of(running));
+        var secondPoll = paged(List.of(ended, failed));
 
         when(runContext.logger()).thenReturn(logger);
         when(client.listTasks(eq("job-id"), any(BatchTasksListOptions.class))).thenReturn(firstPoll, secondPoll);
 
-        long startedAt = System.nanoTime();
-        List<BatchTask> tasks = TaskService.waitForTasksToComplete(runContext, client, "job-id", Duration.ofSeconds(5), Duration.ofMillis(100));
-        long elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+        var startedAt = System.nanoTime();
+        var tasks = TaskService.waitForTasksToComplete(runContext, client, "job-id", Duration.ofSeconds(5), Duration.ofMillis(100));
+        var elapsedMillis = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
 
         assertThat(tasks, contains(ended, failed));
         assertThat(elapsedMillis, greaterThanOrEqualTo(80L));
         verify(logger).info("Task ended '{}' with exit code '{}'", "t1", 0);
         verify(logger).warn("Task '{}' failed with exit code '{}': {}", "t2", 1, "boom");
 
-        ArgumentCaptor<BatchTasksListOptions> options = ArgumentCaptor.forClass(BatchTasksListOptions.class);
+        var options = ArgumentCaptor.forClass(BatchTasksListOptions.class);
         verify(client, times(2)).listTasks(eq("job-id"), options.capture());
         assertThat(options.getValue().getSelect(), containsInAnyOrder("id", "state", "executionInfo"));
     }
 
     @Test
     void timesOutWhenTasksDoNotComplete() {
-        RunContext runContext = mock(RunContext.class);
-        BatchClient client = mock(BatchClient.class);
-        PagedIterable<BatchTask> poll = paged(List.of(task("t1", BatchTaskState.RUNNING, null, null)));
+        var runContext = mock(RunContext.class);
+        var client = mock(BatchClient.class);
+        var poll = paged(List.of(task("t1", BatchTaskState.RUNNING, null, null)));
 
         when(runContext.logger()).thenReturn(mock(Logger.class));
         when(client.listTasks(eq("job-id"), any(BatchTasksListOptions.class))).thenReturn(poll);
@@ -83,9 +83,9 @@ class TaskServiceBatchClientTest {
 
     @Test
     void downloadsTaskFilesIntoTheWorkingDirectory(@TempDir Path workingDir) throws Exception {
-        RunContext runContext = runContextWithWorkingDir(workingDir);
-        BatchClient client = mock(BatchClient.class);
-        BatchTask task = task("t1", BatchTaskState.COMPLETED, 0, null);
+        var runContext = runContextWithWorkingDir(workingDir);
+        var client = mock(BatchClient.class);
+        var task = task("t1", BatchTaskState.COMPLETED, 0, null);
 
         when(client.getTaskFile("job-id", "t1", "wd/outs/1.txt")).thenReturn(BinaryData.fromString("content"));
 
@@ -97,10 +97,10 @@ class TaskServiceBatchClientTest {
 
     @Test
     void readsTaskLogsLineByLine(@TempDir Path workingDir) throws Exception {
-        RunContext runContext = runContextWithWorkingDir(workingDir);
-        BatchClient client = mock(BatchClient.class);
-        BatchTask task = task("t1", BatchTaskState.COMPLETED, 0, null);
-        List<String> lines = new ArrayList<>();
+        var runContext = runContextWithWorkingDir(workingDir);
+        var client = mock(BatchClient.class);
+        var task = task("t1", BatchTaskState.COMPLETED, 0, null);
+        var lines = new ArrayList<String>();
 
         when(client.getTaskFile("job-id", "t1", "stdout.txt")).thenReturn(BinaryData.fromString("first\nsecond\n"));
 
@@ -111,8 +111,8 @@ class TaskServiceBatchClientTest {
     }
 
     private static RunContext runContextWithWorkingDir(Path workingDir) throws Exception {
-        RunContext runContext = mock(RunContext.class);
-        WorkingDir dir = mock(WorkingDir.class);
+        var runContext = mock(RunContext.class);
+        var dir = mock(WorkingDir.class);
         when(runContext.workingDir()).thenReturn(dir);
         when(dir.resolve(any(Path.class))).thenAnswer(invocation -> workingDir.resolve((Path) invocation.getArgument(0)));
         when(dir.createTempFile()).thenAnswer(invocation -> Files.createTempFile(workingDir, "batch", ".tmp"));
@@ -120,15 +120,15 @@ class TaskServiceBatchClientTest {
     }
 
     private static BatchTask task(String id, BatchTaskState state, Integer exitCode, String failure) {
-        BatchTask task = mock(BatchTask.class);
+        var task = mock(BatchTask.class);
         when(task.getId()).thenReturn(id);
         when(task.getState()).thenReturn(state);
         if (exitCode != null) {
-            BatchTaskExecutionInfo executionInfo = mock(BatchTaskExecutionInfo.class);
+            var executionInfo = mock(BatchTaskExecutionInfo.class);
             when(executionInfo.getEndTime()).thenReturn(OffsetDateTime.now());
             when(executionInfo.getExitCode()).thenReturn(exitCode);
             if (failure != null) {
-                BatchTaskFailureInfo failureInfo = mock(BatchTaskFailureInfo.class);
+                var failureInfo = mock(BatchTaskFailureInfo.class);
                 when(failureInfo.getMessage()).thenReturn(failure);
                 when(executionInfo.getFailureInfo()).thenReturn(failureInfo);
             }
@@ -139,7 +139,7 @@ class TaskServiceBatchClientTest {
 
     @SuppressWarnings("unchecked")
     private static PagedIterable<BatchTask> paged(List<BatchTask> tasks) {
-        PagedIterable<BatchTask> paged = mock(PagedIterable.class);
+        var paged = mock(PagedIterable.class);
         when(paged.stream()).thenAnswer(invocation -> tasks.stream());
         return paged;
     }

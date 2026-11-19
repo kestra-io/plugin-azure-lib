@@ -33,7 +33,7 @@ public class OutputFileUploadOptions {
     }
 
     public com.azure.compute.batch.models.OutputFileUploadConfig toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
-        var condition = switch (runContext.render(this.uploadCondition).as(OutputFileUploadCondition.class).orElseThrow()) {
+        var condition = switch (runContext.render(this.uploadCondition).as(OutputFileUploadCondition.class).orElse(OutputFileUploadCondition.TASK_COMPLETION)) {
             case TASK_SUCCESS -> com.azure.compute.batch.models.OutputFileUploadCondition.TASK_SUCCESS;
             case TASK_FAILURE -> com.azure.compute.batch.models.OutputFileUploadCondition.TASK_FAILURE;
             case TASK_COMPLETION -> com.azure.compute.batch.models.OutputFileUploadCondition.TASK_COMPLETION;
