@@ -35,11 +35,23 @@ public class ContainerRegistry {
     @PluginProperty(dynamic = true)
     ComputeNodeIdentityReference identityReference;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.ContainerRegistry to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.ContainerRegistry()
             .withRegistryServer(runContext.render(this.registryServer).as(String.class).orElse(null))
             .withUserName(runContext.render(this.userName).as(String.class).orElse(null))
             .withPassword(runContext.render(this.password).as(String.class).orElse(null))
             .withIdentityReference(this.identityReference == null ? null : this.identityReference.to(runContext));
+    }
+
+    public com.azure.compute.batch.models.ContainerRegistryReference toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.ContainerRegistryReference()
+            .setRegistryServer(runContext.render(this.registryServer).as(String.class).orElse(null))
+            .setUsername(runContext.render(this.userName).as(String.class).orElse(null))
+            .setPassword(runContext.render(this.password).as(String.class).orElse(null))
+            .setIdentityReference(this.identityReference == null ? null : this.identityReference.toBatch(runContext));
     }
 }

@@ -23,8 +23,21 @@ public class OutputFileUploadOptions {
     @Builder.Default
     Property<OutputFileUploadCondition> uploadCondition = Property.ofValue(OutputFileUploadCondition.TASK_COMPLETION);
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.OutputFileUploadOptions to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.OutputFileUploadOptions()
             .withUploadCondition(runContext.render(this.uploadCondition).as(OutputFileUploadCondition.class).orElseThrow());
+    }
+
+    public com.azure.compute.batch.models.OutputFileUploadConfig toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        var condition = switch (runContext.render(this.uploadCondition).as(OutputFileUploadCondition.class).orElseThrow()) {
+            case TASK_SUCCESS -> com.azure.compute.batch.models.OutputFileUploadCondition.TASK_SUCCESS;
+            case TASK_FAILURE -> com.azure.compute.batch.models.OutputFileUploadCondition.TASK_FAILURE;
+            case TASK_COMPLETION -> com.azure.compute.batch.models.OutputFileUploadCondition.TASK_COMPLETION;
+        };
+        return new com.azure.compute.batch.models.OutputFileUploadConfig(condition);
     }
 }

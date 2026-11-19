@@ -31,10 +31,20 @@ public class OutputFileBlobContainerDestination {
     )
     ComputeNodeIdentityReference identityReference;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.OutputFileBlobContainerDestination to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.OutputFileBlobContainerDestination()
             .withPath(runContext.render(path).as(String.class).orElse(null))
             .withContainerUrl(runContext.render(this.containerUrl).as(String.class).orElse(null))
             .withIdentityReference(this.identityReference == null ? null : this.identityReference.to(runContext));
+    }
+
+    public com.azure.compute.batch.models.OutputFileBlobContainerDestination toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.OutputFileBlobContainerDestination(runContext.render(this.containerUrl).as(String.class).orElse(null))
+            .setPath(runContext.render(this.path).as(String.class).orElse(null))
+            .setIdentityReference(this.identityReference == null ? null : this.identityReference.toBatch(runContext));
     }
 }

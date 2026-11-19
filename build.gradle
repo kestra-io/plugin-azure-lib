@@ -70,6 +70,9 @@ dependencies {
     // Azure libraries exposed as api so consumers (plugin-azure, plugin-ee-azure) inherit them transitively
     api(group: 'com.azure', name: 'azure-identity', kestraProvidedJackson)
     api(group: 'com.azure', name: 'azure-storage-blob', kestraProvidedJackson)
+    // Not managed by the Kestra platform BOM yet; no GA release exists.
+    api(group: 'com.azure', name: 'azure-compute-batch', version: '1.0.0-beta.6', kestraProvidedJackson)
+    // Legacy Batch SDK, kept for the deprecated BatchService/TaskService API until consumers move to azure-compute-batch.
     api(group: 'com.microsoft.azure', name: 'azure-batch', version: '11.2.0', kestraProvidedJackson)
     api(group: 'com.microsoft.azure', name: 'azure-storage', version: '8.6.6', kestraProvidedJackson)
 }

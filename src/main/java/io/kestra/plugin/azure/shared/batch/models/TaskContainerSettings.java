@@ -38,11 +38,28 @@ public class TaskContainerSettings {
     )
     Property<ContainerWorkingDirectory> workingDirectory;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.TaskContainerSettings to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.TaskContainerSettings()
             .withContainerRunOptions(runContext.render(this.containerRunOptions).as(String.class).orElse(null))
             .withImageName(runContext.render(this.imageName).as(String.class).orElseThrow())
             .withRegistry(this.registry != null ? this.registry.to(runContext) : null)
             .withWorkingDirectory(runContext.render(this.workingDirectory).as(ContainerWorkingDirectory.class).orElse(null));
+    }
+
+    public com.azure.compute.batch.models.BatchTaskContainerSettings toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        var workingDirectory = runContext.render(this.workingDirectory).as(ContainerWorkingDirectory.class)
+            .map(value -> switch (value) {
+                case TASK_WORKING_DIRECTORY -> com.azure.compute.batch.models.ContainerWorkingDirectory.TASK_WORKING_DIRECTORY;
+                case CONTAINER_IMAGE_DEFAULT -> com.azure.compute.batch.models.ContainerWorkingDirectory.CONTAINER_IMAGE_DEFAULT;
+            })
+            .orElse(null);
+        return new com.azure.compute.batch.models.BatchTaskContainerSettings(runContext.render(this.imageName).as(String.class).orElseThrow())
+            .setContainerRunOptions(runContext.render(this.containerRunOptions).as(String.class).orElse(null))
+            .setRegistry(this.registry != null ? this.registry.toBatch(runContext) : null)
+            .setWorkingDirectory(workingDirectory);
     }
 }

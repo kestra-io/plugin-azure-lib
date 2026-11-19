@@ -13,8 +13,17 @@ public class ComputeNodeIdentityReference {
     @Schema(title = "User-assigned identity resource ID", description = "ARM resource ID of the managed identity used for storage access")
     Property<String> resourceId;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.ComputeNodeIdentityReference to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.ComputeNodeIdentityReference()
             .withResourceId(runContext.render(this.resourceId).as(String.class).orElse(null));
+    }
+
+    public com.azure.compute.batch.models.BatchNodeIdentityReference toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.BatchNodeIdentityReference()
+            .setResourceId(runContext.render(this.resourceId).as(String.class).orElse(null));
     }
 }

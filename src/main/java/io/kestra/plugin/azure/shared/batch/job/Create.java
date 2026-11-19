@@ -42,6 +42,8 @@ import static io.kestra.core.utils.Rethrow.throwRunnable;
 @EqualsAndHashCode
 @Getter
 @NoArgsConstructor
+// Still on the legacy azure-batch API so its behavior stays unchanged for plugin-ee-azure; it moves to azure-compute-batch with its consumers.
+@SuppressWarnings("deprecation")
 public class Create extends AbstractBatch implements RunnableTask<Create.Output>, RemoteRunnerInterface {
 
     public static final String DIRECTORY_MARKER = ".kestradirectory";

@@ -35,10 +35,22 @@ public class OutputFile {
     @Builder.Default
     OutputFileUploadOptions uploadOptions = OutputFileUploadOptions.builder().build();
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.OutputFile to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.OutputFile()
             .withFilePattern(runContext.render(this.filePattern).as(String.class).orElse(null))
             .withDestination(this.destination == null ? null : this.destination.to(runContext))
             .withUploadOptions(this.uploadOptions == null ? null : this.uploadOptions.to(runContext));
+    }
+
+    public com.azure.compute.batch.models.OutputFile toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.OutputFile(
+            runContext.render(this.filePattern).as(String.class).orElse(null),
+            this.destination == null ? null : this.destination.toBatch(runContext),
+            this.uploadOptions == null ? null : this.uploadOptions.toBatch(runContext)
+        );
     }
 }

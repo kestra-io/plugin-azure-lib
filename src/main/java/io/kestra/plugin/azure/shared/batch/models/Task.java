@@ -115,6 +115,10 @@ public class Task {
     )
     Property<Integer> requiredSlots;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public TaskAddParameter to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new TaskAddParameter()
             .withId(this.id == null ? IdUtils.create() : runContext.render(this.id))
@@ -167,5 +171,33 @@ public class Task {
 
         // generate command
         return String.join(" ", commandsWithInterpreter);
+    }
+
+    public com.azure.compute.batch.models.BatchTaskCreateParameters toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.BatchTaskCreateParameters(
+                this.id == null ? IdUtils.create() : runContext.render(this.id),
+                runContext.render(this.commandLine(runContext))
+            )
+            .setDisplayName(runContext.render(this.displayName))
+            .setContainerSettings(this.containerSettings == null ? null : this.containerSettings.toBatch(runContext))
+            .setEnvironmentSettings(this.environments == null ? null : runContext.render(this.environments).asMap(String.class, String.class)
+                .entrySet()
+                .stream()
+                .map(throwFunction(e -> new com.azure.compute.batch.models.EnvironmentSetting(runContext.render(e.getKey()))
+                    .setValue(runContext.render(e.getValue()))
+                ))
+                .collect(Collectors.toList())
+            )
+            .setResourceFiles(this.resourceFiles == null ? null : this.resourceFiles
+                .stream()
+                .map(throwFunction(s -> s.toBatch(runContext)))
+                .collect(Collectors.toList())
+            )
+            .setOutputFiles(this.uploadFiles == null ? null : this.uploadFiles
+                .stream()
+                .map(throwFunction(s -> s.toBatch(runContext)))
+                .collect(Collectors.toList()))
+            .setConstraints(this.constraints == null ? null : this.constraints.toBatch(runContext))
+            .setRequiredSlots(runContext.render(this.requiredSlots).as(Integer.class).orElse(null));
     }
 }

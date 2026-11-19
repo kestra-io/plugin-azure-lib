@@ -57,6 +57,10 @@ public class Job {
     @PluginProperty(group = "advanced")
     private Property<Map<String, String>> labels;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public JobAddParameter to(RunContext runContext, PoolInformation poolInformation) throws IllegalVariableEvaluationException {
         return new JobAddParameter()
             .withId(runContext.render(this.id))
@@ -69,6 +73,20 @@ public class Job {
                     .entrySet()
                     .stream()
                     .map(e -> new MetadataItem().withName(e.getKey()).withValue(e.getValue()))
+                    .toList()
+            );
+    }
+
+    public com.azure.compute.batch.models.BatchJobCreateParameters toBatch(RunContext runContext, String poolId) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.BatchJobCreateParameters(runContext.render(this.id), new com.azure.compute.batch.models.BatchPoolInfo().setPoolId(poolId))
+            .setDisplayName(runContext.render(this.displayName))
+            .setPriority(runContext.render(this.priority).as(Integer.class).orElse(null))
+            .setMaxParallelTasks(runContext.render(this.maxParallelTasks).as(Integer.class).orElse(null))
+            .setMetadata(
+                runContext.render(this.labels).asMap(String.class, String.class)
+                    .entrySet()
+                    .stream()
+                    .map(e -> new com.azure.compute.batch.models.BatchMetadataItem(e.getKey(), e.getValue()))
                     .toList()
             );
     }

@@ -31,10 +31,21 @@ public class TaskConstraints {
     )
     Property<Integer> maxTaskRetryCount;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.TaskConstraints to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.TaskConstraints()
             .withMaxWallClockTime(this.maxWallClockTime == null ? null : Period.parse(runContext.render(this.maxWallClockTime).as(Duration.class).orElseThrow().toString()))
             .withRetentionTime(this.retentionTime == null ? null : Period.parse(runContext.render(this.retentionTime).as(Duration.class).orElseThrow().toString()))
             .withMaxTaskRetryCount(runContext.render(this.maxTaskRetryCount).as(Integer.class).orElse(null));
+    }
+
+    public com.azure.compute.batch.models.BatchTaskConstraints toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.BatchTaskConstraints()
+            .setMaxWallClockTime(runContext.render(this.maxWallClockTime).as(Duration.class).orElse(null))
+            .setRetentionTime(runContext.render(this.retentionTime).as(Duration.class).orElse(null))
+            .setMaxTaskRetryCount(runContext.render(this.maxTaskRetryCount).as(Integer.class).orElse(null));
     }
 }

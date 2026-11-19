@@ -54,6 +54,10 @@ public class ResourceFile {
     @PluginProperty(dynamic = true)
     ComputeNodeIdentityReference identityReference;
 
+    /**
+     * @deprecated legacy {@code com.microsoft.azure:azure-batch} type, use {@link #toBatch} instead.
+     */
+    @Deprecated
     public com.microsoft.azure.batch.protocol.models.ResourceFile to(RunContext runContext) throws IllegalVariableEvaluationException {
         return new com.microsoft.azure.batch.protocol.models.ResourceFile()
             .withAutoStorageContainerName(runContext.render(this.autoStorageContainerName).as(String.class).orElse(null))
@@ -63,5 +67,16 @@ public class ResourceFile {
             .withFilePath(runContext.render(this.filePath).as(String.class).orElse(null))
             .withFileMode(runContext.render(this.fileMode).as(String.class).orElse(null))
             .withIdentityReference(identityReference == null ? null : identityReference.to(runContext));
+    }
+
+    public com.azure.compute.batch.models.ResourceFile toBatch(RunContext runContext) throws IllegalVariableEvaluationException {
+        return new com.azure.compute.batch.models.ResourceFile()
+            .setAutoStorageContainerName(runContext.render(this.autoStorageContainerName).as(String.class).orElse(null))
+            .setStorageContainerUrl(runContext.render(this.storageContainerUrl).as(String.class).orElse(null))
+            .setHttpUrl(runContext.render(this.httpUrl).as(String.class).orElse(null))
+            .setBlobPrefix(runContext.render(this.blobPrefix).as(String.class).orElse(null))
+            .setFilePath(runContext.render(this.filePath).as(String.class).orElse(null))
+            .setFileMode(runContext.render(this.fileMode).as(String.class).orElse(null))
+            .setIdentityReference(identityReference == null ? null : identityReference.toBatch(runContext));
     }
 }
