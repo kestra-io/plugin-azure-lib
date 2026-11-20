@@ -133,7 +133,7 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
             // the job keeps the id the user gave it, while the task runner's job ids share the generated job name prefix
             var cloudJob = BatchService.getExistingJob(runContext, client, runContext.render(this.job.getId()));
             if (cloudJob.isEmpty()) {
-                String baseJobName = ScriptService.jobName(runContext);
+                var baseJobName = ScriptService.jobName(runContext);
                 baseJobName = baseJobName.substring(0, baseJobName.lastIndexOf('-') + 1);
                 cloudJob = BatchService.getExistingJob(runContext, client, baseJobName);
             }

@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @MicronautTest
@@ -44,6 +45,38 @@ class CreateResumeTest {
 
             assertEquals(true, output.getVars().get("resumed"));
             assertTrue(endpoint.requests("POST", "/jobs").isEmpty(), "no new job is created");
+        }
+    }
+
+    @Test
+    void resumesTheJobCreatedWithATemplatedJobId() throws Exception {
+        try (var endpoint = new FakeBatch()) {
+            var runContext = runContext(2);
+            var firstAttempt = runContext(1);
+            var create = create(endpoint, "job-{{ execution.id }}");
+            endpoint.jobs("startswith(id, 'job-exec')", job("job-exec", create, firstAttempt));
+            endpoint.completedTask("job-exec", "echo", "::{\"outputs\":{\"resumed\":true}}::\n");
+
+            var output = create.run(runContext);
+
+            assertEquals(true, output.getVars().get("resumed"));
+            assertTrue(endpoint.requests("POST", "/jobs").isEmpty(), "no new job is created");
+        }
+    }
+
+    @Test
+    void doesNotResumeAJobOfAnotherExecution() throws Exception {
+        try (var endpoint = new FakeBatch()) {
+            var runContext = runContext(2);
+            var otherExecution = runContext("other-exec", 1);
+            var create = create(endpoint, "myjob");
+            endpoint.jobs("startswith(id, 'myjob')", job("myjob", create, otherExecution));
+            endpoint.completedTask("myjob", "echo", "::{\"outputs\":{\"resumed\":true}}::\n");
+
+            // the fake endpoint has no reply for job creation, so creating a new job fails
+            assertThrows(Exception.class, () -> create.run(runContext));
+
+            assertEquals(1, endpoint.requests("POST", "/jobs").size(), "a new job is created instead");
         }
     }
 
@@ -82,10 +115,14 @@ class CreateResumeTest {
     }
 
     private RunContext runContext(int attemptsCount) {
+        return runContext("exec", attemptsCount);
+    }
+
+    private RunContext runContext(String executionId, int attemptsCount) {
         return runContextFactory.of(Map.of(
             "flow", Map.of("namespace", "company.team", "id", "my-flow"),
             "task", Map.of("id", "create"),
-            "execution", Map.of("id", "exec"),
+            "execution", Map.of("id", executionId),
             "taskrun", Map.of("id", "taskrun", "attemptsCount", attemptsCount)
         ));
     }
