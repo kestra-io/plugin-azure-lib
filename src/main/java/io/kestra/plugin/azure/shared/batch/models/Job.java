@@ -54,7 +54,9 @@ public class Job {
 
     @Schema(
         title = "Job labels",
-        description = "Key/value metadata applied to the job"
+        description = """
+            Key/value metadata applied to the job.
+            Kestra always adds its run labels prefixed with `kestra-` (namespace, flow, task, execution, task run and attempt),             which are used to resume the job and take precedence over user labels with the same key."""
     )
     @PluginProperty(group = "advanced")
     private Property<Map<String, String>> labels;
