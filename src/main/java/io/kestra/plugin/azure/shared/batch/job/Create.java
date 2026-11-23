@@ -14,7 +14,6 @@ import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.runners.AbstractLogConsumer;
 import io.kestra.core.models.tasks.runners.DefaultLogConsumer;
 import io.kestra.core.models.tasks.runners.RemoteRunnerInterface;
-import io.kestra.core.models.tasks.runners.ScriptService;
 import io.kestra.core.runners.RunContext;
 import io.kestra.plugin.azure.shared.batch.AbstractBatch;
 import io.kestra.plugin.azure.shared.batch.BatchService;
@@ -130,13 +129,7 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
         Map<String, Integer> tasksMapping = new HashMap<>();
         String jobId = null;
         if (Boolean.TRUE.equals(runContext.render(resume).as(Boolean.class).orElseThrow())) {
-            // the job keeps the id the user gave it, while the task runner's job ids share the generated job name prefix
-            var cloudJob = BatchService.getExistingJob(runContext, client, runContext.render(this.job.getId()));
-            if (cloudJob.isEmpty()) {
-                var baseJobName = ScriptService.jobName(runContext);
-                baseJobName = baseJobName.substring(0, baseJobName.lastIndexOf('-') + 1);
-                cloudJob = BatchService.getExistingJob(runContext, client, baseJobName);
-            }
+            var cloudJob = BatchService.findResumableJob(runContext, client, runContext.render(this.job.getId()));
             if (cloudJob.isPresent()) {
                 jobId = cloudJob.get().id();
                 logger.info("Job is resumed from an already running job {} ", jobId);

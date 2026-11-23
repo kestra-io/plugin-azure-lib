@@ -2,6 +2,7 @@ package io.kestra.plugin.azure.shared.batch.job;
 
 import com.microsoft.azure.batch.protocol.models.PoolInformation;
 import com.sun.net.httpserver.HttpServer;
+import io.kestra.core.junit.annotations.KestraTest;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.runners.ScriptService;
 import io.kestra.core.runners.RunContext;
@@ -9,7 +10,6 @@ import io.kestra.core.runners.RunContextFactory;
 import io.kestra.core.serializers.JacksonMapper;
 import io.kestra.plugin.azure.shared.batch.models.Job;
 import io.kestra.plugin.azure.shared.batch.models.Task;
-import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@MicronautTest
+@KestraTest
 class CreateResumeTest {
     @Inject
     RunContextFactory runContextFactory;

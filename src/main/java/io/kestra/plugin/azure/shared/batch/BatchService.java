@@ -42,6 +42,21 @@ public class BatchService {
 
     private static final String ATTEMPT_LABEL = "kestra-taskrun-attempt";
 
+    /**
+     * Finds the job of an earlier attempt of the current task run, so a retried task can resume it.
+     * The job keeps the id the user gave it, so that id is looked up first. Jobs created by the task runner
+     * get a new random suffix on each attempt, so the generated job name prefix is looked up next.
+     */
+    public static Optional<CloudJob> findResumableJob(RunContext runContext, BatchClient client, String jobId) throws IOException {
+        var cloudJob = getExistingJob(runContext, client, jobId);
+        if (cloudJob.isPresent()) {
+            return cloudJob;
+        }
+
+        var jobName = ScriptService.jobName(runContext);
+        return getExistingJob(runContext, client, jobName.substring(0, jobName.lastIndexOf('-') + 1));
+    }
+
     public static Optional<CloudJob> getExistingJob(RunContext runContext, BatchClient client, String baseJobName) throws IOException {
         var resumeLabels = new HashMap<>(ScriptService.labels(runContext, "kestra-", true, true));
         // a resumed task runs under a new attempt, so a job created by an earlier attempt must still match
