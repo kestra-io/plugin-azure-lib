@@ -132,6 +132,7 @@ class CreateResumeTest {
         return Map.of(
             "id", id,
             "creationTime", "2026-01-01T00:00:00Z",
+            "state", "active",
             "metadata", created.metadata().stream().map(item -> Map.of("name", item.name(), "value", item.value())).toList()
         );
     }

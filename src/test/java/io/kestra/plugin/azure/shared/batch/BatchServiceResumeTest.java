@@ -109,6 +109,95 @@ class BatchServiceResumeTest {
         }
     }
 
+    @Test
+    void resumesAnActiveJobWithoutTasksOrWithARunningTask() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "a", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+
+            assertEquals(BASE_JOB_NAME + "a", resumable(endpoint, runContext).orElseThrow().id());
+
+            endpoint.tasks.put(BASE_JOB_NAME + "a", List.of(task("running", null)));
+            assertEquals(BASE_JOB_NAME + "a", resumable(endpoint, runContext).orElseThrow().id());
+
+            endpoint.tasks.put(BASE_JOB_NAME + "a", List.of(task("completed", "success")));
+            assertEquals(BASE_JOB_NAME + "a", resumable(endpoint, runContext).orElseThrow().id());
+        }
+    }
+
+    @Test
+    void doesNotResumeAJobThatIsNotActive() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            for (var state : List.of("completed", "terminating", "deleting")) {
+                var job = job(BASE_JOB_NAME + state, "2026-01-01T00:00:00Z", labels(runContext, Map.of()));
+                job.put("state", state);
+                endpoint.jobs.add(job);
+            }
+
+            assertTrue(resumable(endpoint, runContext).isEmpty());
+            // still visible to the plain lookup
+            assertTrue(BatchService.getExistingJob(runContext, endpoint.client, BASE_JOB_NAME).isPresent());
+        }
+    }
+
+    @Test
+    void doesNotResumeAnActiveJobWhoseTasksAllCompletedWithAFailure() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "failed", "2026-01-02T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.tasks.put(BASE_JOB_NAME + "failed", List.of(task("completed", "success"), task("completed", "failure")));
+
+            assertTrue(resumable(endpoint, runContext).isEmpty());
+
+            // a task still running means the job is not finished yet
+            endpoint.tasks.put(BASE_JOB_NAME + "failed", List.of(task("running", null), task("completed", "failure")));
+            assertEquals(BASE_JOB_NAME + "failed", resumable(endpoint, runContext).orElseThrow().id());
+        }
+    }
+
+    @Test
+    void resumesTheNewestJobThatCanStillRun() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "old", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.jobs.add(job(BASE_JOB_NAME + "new", "2026-01-02T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.tasks.put(BASE_JOB_NAME + "new", List.of(task("completed", "failure")));
+
+            assertEquals(BASE_JOB_NAME + "old", resumable(endpoint, runContext).orElseThrow().id());
+        }
+    }
+
+    @Test
+    void findsTheJobByTheGeneratedPrefixWhenTheJobIdIsNotFound() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var jobName = ScriptService.jobName(runContext);
+            var prefix = jobName.substring(0, jobName.lastIndexOf('-') + 1);
+            endpoint.jobs.add(job(prefix + "a", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+
+            var found = BatchService.findResumableJob(runContext, client(endpoint, runContext), "unused-id");
+
+            assertEquals(prefix + "a", found.orElseThrow().id());
+            assertTrue(endpoint.queries.getFirst().contains("startswith(id, 'unused-id')"));
+            assertTrue(endpoint.queries.getLast().contains("startswith(id, '" + prefix + "')"));
+        }
+    }
+
+    private java.util.Optional<com.microsoft.azure.batch.protocol.models.CloudJob> resumable(FakeJobList endpoint, RunContext runContext) throws Exception {
+        return BatchService.findResumableJob(runContext, client(endpoint, runContext), BASE_JOB_NAME);
+    }
+
+    private static Map<String, Object> task(String state, String result) {
+        var task = new HashMap<String, Object>();
+        task.put("id", "task-" + state);
+        task.put("state", state);
+        if (result != null) {
+            task.put("executionInfo", Map.of("result", result, "retryCount", 0, "requeueCount", 0));
+        }
+        return task;
+    }
+
     private RunContext runContext(FakeJobList endpoint) {
         return runContext(endpoint, 1);
     }
@@ -145,6 +234,7 @@ class BatchServiceResumeTest {
         var job = new HashMap<String, Object>();
         job.put("id", id);
         job.put("creationTime", creationTime);
+        job.put("state", "active");
         if (metadata != null) {
             job.put("metadata", metadata.entrySet().stream()
                 .map(entry -> Map.of("name", entry.getKey(), "value", entry.getValue()))
@@ -157,14 +247,29 @@ class BatchServiceResumeTest {
         private final HttpServer server;
         private final List<Map<String, Object>> jobs = new CopyOnWriteArrayList<>();
         private final List<String> queries = new CopyOnWriteArrayList<>();
+        private final Map<String, List<Map<String, Object>>> tasks = new java.util.concurrent.ConcurrentHashMap<>();
         private BatchClient client;
 
         private FakeJobList() throws IOException {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/jobs", exchange -> {
-                var query = exchange.getRequestURI().getRawQuery();
-                queries.add(query == null ? "" : URLDecoder.decode(query, StandardCharsets.UTF_8));
-                var body = JacksonMapper.ofJson().writeValueAsBytes(Map.of("value", jobs));
+                var path = exchange.getRequestURI().getPath();
+                List<Map<String, Object>> value = jobs;
+                if (path.endsWith("/tasks")) {
+                    var jobId = path.substring("/jobs/".length(), path.length() - "/tasks".length());
+                    value = tasks.getOrDefault(jobId, List.of());
+                } else {
+                    var query = exchange.getRequestURI().getRawQuery();
+                    var decoded = query == null ? "" : URLDecoder.decode(query, StandardCharsets.UTF_8);
+                    queries.add(decoded);
+                    // honor the startswith(id, 'prefix') filter like Batch does
+                    var matcher = java.util.regex.Pattern.compile("startswith\\(id, '([^']*)'\\)").matcher(decoded);
+                    if (matcher.find()) {
+                        var prefix = matcher.group(1);
+                        value = jobs.stream().filter(job -> String.valueOf(job.get("id")).startsWith(prefix)).toList();
+                    }
+                }
+                var body = JacksonMapper.ofJson().writeValueAsBytes(Map.of("value", value));
                 exchange.getResponseHeaders().set("Content-Type", "application/json");
                 exchange.sendResponseHeaders(200, body.length);
                 try (var response = exchange.getResponseBody()) {

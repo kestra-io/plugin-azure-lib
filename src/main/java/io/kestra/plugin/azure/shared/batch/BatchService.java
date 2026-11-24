@@ -5,7 +5,10 @@ import com.microsoft.azure.batch.BatchClient;
 import com.microsoft.azure.batch.DetailLevel;
 import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials;
 import com.microsoft.azure.batch.protocol.models.CloudJob;
+import com.microsoft.azure.batch.protocol.models.JobState;
 import com.microsoft.azure.batch.protocol.models.MetadataItem;
+import com.microsoft.azure.batch.protocol.models.TaskExecutionResult;
+import com.microsoft.azure.batch.protocol.models.TaskState;
 import com.microsoft.azure.serializer.AzureJacksonAdapter;
 import com.microsoft.rest.RestClient;
 import com.microsoft.rest.RestException;
@@ -46,25 +49,62 @@ public class BatchService {
      * Finds the job of an earlier attempt of the current task run, so a retried task can resume it.
      * The job keeps the id the user gave it, so that id is looked up first. Jobs created by the task runner
      * get a new random suffix on each attempt, so the generated job name prefix is looked up next.
+     * Only a job that can still run is returned, see {@link #isResumable}.
      */
     public static Optional<CloudJob> findResumableJob(RunContext runContext, BatchClient client, String jobId) throws IOException {
-        var cloudJob = getExistingJob(runContext, client, jobId);
+        var cloudJob = findResumableJobByPrefix(runContext, client, jobId);
         if (cloudJob.isPresent()) {
             return cloudJob;
         }
 
         var jobName = ScriptService.jobName(runContext);
-        return getExistingJob(runContext, client, jobName.substring(0, jobName.lastIndexOf('-') + 1));
+        return findResumableJobByPrefix(runContext, client, jobName.substring(0, jobName.lastIndexOf('-') + 1));
     }
 
     public static Optional<CloudJob> getExistingJob(RunContext runContext, BatchClient client, String baseJobName) throws IOException {
+        return matchingJobs(runContext, client, baseJobName).stream().findFirst();
+    }
+
+    private static Optional<CloudJob> findResumableJobByPrefix(RunContext runContext, BatchClient client, String baseJobName) throws IOException {
+        // newest first: the first one that can still run wins
+        for (var cloudJob : matchingJobs(runContext, client, baseJobName)) {
+            if (isResumable(client, cloudJob)) {
+                return Optional.of(cloudJob);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Jobs of an earlier attempt of the current task run whose id starts with the given name, newest first.
+     */
+    private static List<CloudJob> matchingJobs(RunContext runContext, BatchClient client, String baseJobName) throws IOException {
         var resumeLabels = new HashMap<>(ScriptService.labels(runContext, "kestra-", true, true));
         // a resumed task runs under a new attempt, so a job created by an earlier attempt must still match
         resumeLabels.remove(ATTEMPT_LABEL);
         var listJobsResponse = client.jobOperations().listJobs(new DetailLevel.Builder().withFilterClause("startswith(id, '" + baseJobName + "')").build());
         return listJobsResponse.stream()
             .filter(cloudJob -> hasAllLabels(resumeLabels, cloudJob.metadata()))
-            .min((cloudJob1, cloudJob2) -> -cloudJob1.creationTime().compareTo(cloudJob2.creationTime()));
+            .sorted((cloudJob1, cloudJob2) -> -cloudJob1.creationTime().compareTo(cloudJob2.creationTime()))
+            .toList();
+    }
+
+    /**
+     * Resuming a job must not only replay the outcome of the earlier attempt:
+     * - a job that is not active (completed, terminating or deleting) is finished or going away, a retry would find
+     *   it again and fail or report the same result (JobBeingDeleted, JobNotFound);
+     * - an active job whose tasks all completed and one failed: Azure Batch keeps the job active after its tasks
+     *   finish (no onAllTasksComplete), so a retry would wait on the old tasks and report the same failure.
+     */
+    private static boolean isResumable(BatchClient client, CloudJob cloudJob) throws IOException {
+        if (cloudJob.state() != JobState.ACTIVE) {
+            return false;
+        }
+
+        var tasks = client.taskOperations().listTasks(cloudJob.id()).stream().toList();
+        var allCompleted = !tasks.isEmpty() && tasks.stream().allMatch(task -> task.state() == TaskState.COMPLETED);
+        var anyFailed = tasks.stream().anyMatch(task -> task.executionInfo() != null && task.executionInfo().result() == TaskExecutionResult.FAILURE);
+        return !(allCompleted && anyFailed);
     }
 
     private static boolean hasAllLabels(Map<String, String> resumeLabels, List<MetadataItem> metadata) {
