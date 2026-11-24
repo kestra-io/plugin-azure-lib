@@ -163,7 +163,7 @@ public class BatchService {
             }
 
             if (System.nanoTime() > deadline) {
-                throw new IllegalStateException("Job '" + jobId + "' of a previous attempt is still being deleted after " + timeout + ", retry later or use another job id");
+                throw new IllegalStateException("Job '" + jobId + "' of a previous attempt is still being deleted after " + timeout.toSeconds() + " seconds, retry later or use another job id");
             }
             Thread.sleep(pollInterval.toMillis());
         }

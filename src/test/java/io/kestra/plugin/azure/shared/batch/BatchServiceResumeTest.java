@@ -1,6 +1,7 @@
 package io.kestra.plugin.azure.shared.batch;
 
 import com.microsoft.azure.batch.BatchClient;
+import com.microsoft.azure.batch.protocol.models.BatchErrorException;
 import com.microsoft.azure.batch.protocol.models.CloudJob;
 import com.microsoft.azure.batch.protocol.models.PoolInformation;
 import com.sun.net.httpserver.HttpExchange;
@@ -246,6 +247,55 @@ class BatchServiceResumeTest {
         }
     }
 
+    @Test
+    void doesNotDeleteAJobThatIsAlreadyBeingDeleted() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var id = BASE_JOB_NAME + "a";
+            var deleting = job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of()));
+            deleting.put("state", "deleting");
+            endpoint.jobs.add(deleting);
+            // the job disappears by itself after two polls
+            endpoint.vanishAfterPolls(id, 2);
+
+            BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10));
+
+            assertTrue(endpoint.deleted.isEmpty(), "no delete request for a job already being deleted");
+        }
+    }
+
+    @Test
+    void ignoresAConflictOrNotFoundOnDeleteAndKeepsWaiting() throws Exception {
+        for (var code : List.of("JobBeingDeleted", "JobNotFound")) {
+            try (var endpoint = new FakeJobList()) {
+                var runContext = runContext(endpoint);
+                var id = BASE_JOB_NAME + "a";
+                endpoint.jobs.add(job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+                endpoint.deleteStatus = "JobNotFound".equals(code) ? 404 : 409;
+                endpoint.deleteCode = code;
+                endpoint.vanishAfterPolls(id, 1);
+
+                BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10));
+
+                assertEquals(List.of(id), endpoint.deleted, code);
+            }
+        }
+    }
+
+    @Test
+    void passesUpAnyOtherErrorOnDelete() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var id = BASE_JOB_NAME + "a";
+            endpoint.jobs.add(job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.deleteStatus = 403;
+            endpoint.deleteCode = "AuthenticationFailed";
+
+            assertThrows(BatchErrorException.class, () ->
+                BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10)));
+        }
+    }
+
     private Optional<CloudJob> resumable(FakeJobList endpoint, RunContext runContext) throws Exception {
         return BatchService.findResumableJob(runContext, client(endpoint, runContext), BASE_JOB_NAME);
     }
@@ -313,7 +363,10 @@ class BatchServiceResumeTest {
         private final List<String> deleted = new CopyOnWriteArrayList<>();
         private final List<String> goneTasks = new CopyOnWriteArrayList<>();
         private final Map<String, Integer> lingering = new ConcurrentHashMap<>();
+        private final Map<String, Integer> vanishing = new ConcurrentHashMap<>();
         private int deleteLag = 0;
+        private int deleteStatus = 202;
+        private String deleteCode = null;
         private BatchClient client;
 
         private FakeJobList() throws IOException {
@@ -326,11 +379,17 @@ class BatchServiceResumeTest {
                     var jobId = path.substring("/jobs/".length());
                     if (exchange.getRequestMethod().equals("DELETE")) {
                         deleted.add(jobId);
+                        if (deleteStatus >= 400) {
+                            var body = ("{\"code\":\"" + deleteCode + "\",\"message\":{\"lang\":\"en-US\",\"value\":\"no\"}}").getBytes(StandardCharsets.UTF_8);
+                            send(exchange, deleteStatus, body);
+                            return;
+                        }
                         lingering.put(jobId, deleteLag);
                         send(exchange, 202, new byte[0]);
                         return;
                     }
-                    var gone = deleted.contains(jobId) && lingering.merge(jobId, -1, Integer::sum) < 0;
+                    var gone = (deleted.contains(jobId) && lingering.merge(jobId, -1, Integer::sum) < 0)
+                        || (vanishing.containsKey(jobId) && vanishing.merge(jobId, -1, Integer::sum) < 0);
                     var found = gone ? null : jobs.stream().filter(job -> jobId.equals(job.get("id"))).findFirst().orElse(null);
                     if (found == null) {
                         var body = "{\"code\":\"JobNotFound\",\"message\":{\"lang\":\"en-US\",\"value\":\"gone\"}}".getBytes(StandardCharsets.UTF_8);
@@ -362,6 +421,10 @@ class BatchServiceResumeTest {
                 send(exchange, 200, JacksonMapper.ofJson().writeValueAsBytes(Map.of("value", value)));
             });
             server.start();
+        }
+
+        private void vanishAfterPolls(String jobId, int polls) {
+            vanishing.put(jobId, polls);
         }
 
         private static void send(HttpExchange exchange, int status, byte[] body) throws IOException {
