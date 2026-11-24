@@ -3,6 +3,7 @@ package io.kestra.plugin.azure.shared.batch;
 import com.microsoft.azure.batch.BatchClient;
 import com.microsoft.azure.batch.protocol.models.CloudJob;
 import com.microsoft.azure.batch.protocol.models.PoolInformation;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.runners.ScriptService;
@@ -363,7 +364,7 @@ class BatchServiceResumeTest {
             server.start();
         }
 
-        private static void send(com.sun.net.httpserver.HttpExchange exchange, int status, byte[] body) throws IOException {
+        private static void send(HttpExchange exchange, int status, byte[] body) throws IOException {
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
             try (var response = exchange.getResponseBody()) {
