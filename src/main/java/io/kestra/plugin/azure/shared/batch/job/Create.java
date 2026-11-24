@@ -152,6 +152,10 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
 
                 final JobAddParameter job = this.job.to(runContext, poolInfo);
                 jobId = job.id();
+                if (Boolean.TRUE.equals(runContext.render(resume).as(Boolean.class).orElseThrow())) {
+                    // a job of an earlier attempt that cannot be resumed still owns this id
+                    BatchService.discardPreviousJob(runContext, client, jobId);
+                }
                 client.jobOperations().createJob(job);
 
                 logger.info("Job '{}' created on pool '{}'", jobId, poolInfo.poolId());

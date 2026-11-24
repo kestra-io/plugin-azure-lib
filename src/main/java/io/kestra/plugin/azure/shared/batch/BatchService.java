@@ -4,7 +4,9 @@ import com.microsoft.azure.AzureResponseBuilder;
 import com.microsoft.azure.batch.BatchClient;
 import com.microsoft.azure.batch.DetailLevel;
 import com.microsoft.azure.batch.auth.BatchSharedKeyCredentials;
+import com.microsoft.azure.batch.protocol.models.BatchErrorException;
 import com.microsoft.azure.batch.protocol.models.CloudJob;
+import com.microsoft.azure.batch.protocol.models.CloudTask;
 import com.microsoft.azure.batch.protocol.models.JobState;
 import com.microsoft.azure.batch.protocol.models.MetadataItem;
 import com.microsoft.azure.batch.protocol.models.TaskExecutionResult;
@@ -20,6 +22,7 @@ import io.kestra.core.models.tasks.runners.ScriptService;
 import io.kestra.core.runners.RunContext;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
@@ -101,10 +104,74 @@ public class BatchService {
             return false;
         }
 
-        var tasks = client.taskOperations().listTasks(cloudJob.id()).stream().toList();
+        List<CloudTask> tasks;
+        try {
+            tasks = client.taskOperations().listTasks(cloudJob.id(), new DetailLevel.Builder().withSelectClause("id,state,executionInfo").build()).stream().toList();
+        } catch (BatchErrorException e) {
+            // the job is being deleted since the listing: nothing to resume
+            if (isJobGone(e)) {
+                return false;
+            }
+            throw e;
+        }
         var allCompleted = !tasks.isEmpty() && tasks.stream().allMatch(task -> task.state() == TaskState.COMPLETED);
         var anyFailed = tasks.stream().anyMatch(task -> task.executionInfo() != null && task.executionInfo().result() == TaskExecutionResult.FAILURE);
         return !(allCompleted && anyFailed);
+    }
+
+    private static final Duration DISCARD_TIMEOUT = Duration.ofMinutes(2);
+    private static final Duration DISCARD_POLL_INTERVAL = Duration.ofSeconds(2);
+
+    /**
+     * A job that cannot be resumed (see {@link #findResumableJob}) keeps its id, and a job id is unique in a Batch account,
+     * so a job created with the same id would fail with a conflict. This deletes the job of an earlier attempt of the
+     * current task run that has exactly this id and waits until it is gone, so a new job can be created under that id.
+     * Only a job carrying the run labels of the current task run is deleted, never another one.
+     */
+    public static void discardPreviousJob(RunContext runContext, BatchClient client, String jobId) throws IOException, InterruptedException {
+        discardPreviousJob(runContext, client, jobId, DISCARD_TIMEOUT, DISCARD_POLL_INTERVAL);
+    }
+
+    static void discardPreviousJob(RunContext runContext, BatchClient client, String jobId, Duration timeout, Duration pollInterval) throws IOException, InterruptedException {
+        var previous = matchingJobs(runContext, client, jobId).stream()
+            .filter(cloudJob -> jobId.equals(cloudJob.id()))
+            .findFirst();
+        if (previous.isEmpty()) {
+            return;
+        }
+
+        runContext.logger().info("Job '{}' of a previous attempt cannot be resumed (state {}), deleting it before creating a new one", jobId, previous.get().state());
+        if (previous.get().state() != JobState.DELETING) {
+            try {
+                client.jobOperations().deleteJob(jobId);
+            } catch (BatchErrorException e) {
+                if (!isJobGone(e)) {
+                    throw e;
+                }
+            }
+        }
+
+        var deadline = System.nanoTime() + timeout.toNanos();
+        while (true) {
+            try {
+                client.jobOperations().getJob(jobId);
+            } catch (BatchErrorException e) {
+                if (isJobGone(e)) {
+                    return;
+                }
+                throw e;
+            }
+
+            if (System.nanoTime() > deadline) {
+                throw new IllegalStateException("Job '" + jobId + "' of a previous attempt is still being deleted after " + timeout + ", retry later or use another job id");
+            }
+            Thread.sleep(pollInterval.toMillis());
+        }
+    }
+
+    private static boolean isJobGone(BatchErrorException e) {
+        var code = e.body() == null ? null : e.body().code();
+        return "JobNotFound".equals(code) || "JobBeingDeleted".equals(code) || (e.response() != null && e.response().code() == 404);
     }
 
     private static boolean hasAllLabels(Map<String, String> resumeLabels, List<MetadataItem> metadata) {

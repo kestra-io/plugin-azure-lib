@@ -81,6 +81,24 @@ class CreateResumeTest {
     }
 
     @Test
+    void deletesAJobOfAnEarlierAttemptThatCannotBeResumedBeforeCreatingANewOne() throws Exception {
+        try (var endpoint = new FakeBatch()) {
+            var runContext = runContext(2);
+            var firstAttempt = runContext(1);
+            var create = create(endpoint, "myjob");
+            var completed = new java.util.HashMap<>(job("myjob", create, firstAttempt));
+            completed.put("state", "completed");
+            endpoint.jobs("startswith(id, 'myjob')", completed);
+
+            // the fake endpoint has no reply for job creation, so creating the new job fails
+            assertThrows(Exception.class, () -> create.run(runContext));
+
+            assertEquals(1, endpoint.requests("DELETE", "/jobs/myjob").size(), "the old job owning the id is deleted");
+            assertEquals(1, endpoint.requests("POST", "/jobs").size(), "a new job is created under the same id");
+        }
+    }
+
+    @Test
     void resumesATaskRunnerJobWithAnotherSuffix() throws Exception {
         try (var endpoint = new FakeBatch()) {
             var runContext = runContext(2);
