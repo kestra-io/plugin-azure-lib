@@ -1,7 +1,10 @@
 package io.kestra.plugin.azure.shared.batch;
 
 import com.microsoft.azure.batch.BatchClient;
+import com.microsoft.azure.batch.protocol.models.BatchErrorException;
+import com.microsoft.azure.batch.protocol.models.CloudJob;
 import com.microsoft.azure.batch.protocol.models.PoolInformation;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.kestra.core.models.property.Property;
 import io.kestra.core.models.tasks.runners.ScriptService;
@@ -17,18 +20,24 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @MicronautTest
 class BatchServiceResumeTest {
+    private static final Pattern STARTSWITH = Pattern.compile("startswith\\(id, '([^']*)'\\)");
     private static final String BASE_JOB_NAME = "company-team-my-flow-create-";
 
     @Inject
@@ -109,6 +118,198 @@ class BatchServiceResumeTest {
         }
     }
 
+    @Test
+    void resumesAnActiveJobWithoutTasksOrWithARunningTask() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "a", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+
+            assertEquals(BASE_JOB_NAME + "a", resumable(endpoint, runContext).orElseThrow().id());
+
+            endpoint.tasks.put(BASE_JOB_NAME + "a", List.of(task("running", null)));
+            assertEquals(BASE_JOB_NAME + "a", resumable(endpoint, runContext).orElseThrow().id());
+
+            endpoint.tasks.put(BASE_JOB_NAME + "a", List.of(task("completed", "success")));
+            assertEquals(BASE_JOB_NAME + "a", resumable(endpoint, runContext).orElseThrow().id());
+        }
+    }
+
+    @Test
+    void doesNotResumeAJobThatIsNotActive() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            for (var state : List.of("completed", "terminating", "deleting")) {
+                var job = job(BASE_JOB_NAME + state, "2026-01-01T00:00:00Z", labels(runContext, Map.of()));
+                job.put("state", state);
+                endpoint.jobs.add(job);
+            }
+
+            assertTrue(resumable(endpoint, runContext).isEmpty());
+            // still visible to the plain lookup
+            assertTrue(BatchService.getExistingJob(runContext, endpoint.client, BASE_JOB_NAME).isPresent());
+        }
+    }
+
+    @Test
+    void doesNotResumeAnActiveJobWhoseTasksAllCompletedWithAFailure() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "failed", "2026-01-02T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.tasks.put(BASE_JOB_NAME + "failed", List.of(task("completed", "success"), task("completed", "failure")));
+
+            assertTrue(resumable(endpoint, runContext).isEmpty());
+
+            // a task still running means the job is not finished yet
+            endpoint.tasks.put(BASE_JOB_NAME + "failed", List.of(task("running", null), task("completed", "failure")));
+            assertEquals(BASE_JOB_NAME + "failed", resumable(endpoint, runContext).orElseThrow().id());
+        }
+    }
+
+    @Test
+    void resumesTheNewestJobThatCanStillRun() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "old", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.jobs.add(job(BASE_JOB_NAME + "new", "2026-01-02T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.tasks.put(BASE_JOB_NAME + "new", List.of(task("completed", "failure")));
+
+            assertEquals(BASE_JOB_NAME + "old", resumable(endpoint, runContext).orElseThrow().id());
+        }
+    }
+
+    @Test
+    void findsTheJobByTheGeneratedPrefixWhenTheJobIdIsNotFound() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var jobName = ScriptService.jobName(runContext);
+            var prefix = jobName.substring(0, jobName.lastIndexOf('-') + 1);
+            endpoint.jobs.add(job(prefix + "a", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+
+            var found = BatchService.findResumableJob(runContext, client(endpoint, runContext), "unused-id");
+
+            assertEquals(prefix + "a", found.orElseThrow().id());
+            assertTrue(endpoint.queries.getFirst().contains("startswith(id, 'unused-id')"));
+            assertTrue(endpoint.queries.getLast().contains("startswith(id, '" + prefix + "')"));
+        }
+    }
+
+    @Test
+    void doesNotResumeAJobDeletedBetweenTheListingAndTheTasks() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "a", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.goneTasks.add(BASE_JOB_NAME + "a");
+
+            assertTrue(resumable(endpoint, runContext).isEmpty());
+        }
+    }
+
+    @Test
+    void discardsTheJobOfThePreviousAttemptThatOwnsTheId() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var id = BASE_JOB_NAME + "a";
+            endpoint.jobs.add(job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.deleteLag = 2;
+
+            BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10));
+
+            assertEquals(List.of(id), endpoint.deleted);
+        }
+    }
+
+    @Test
+    void doesNotDiscardAJobOfAnotherTaskRunOrAnotherId() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            endpoint.jobs.add(job(BASE_JOB_NAME + "other", "2026-01-01T00:00:00Z", labels(runContext, Map.of("kestra-taskrun-id", "another-taskrun"))));
+            endpoint.jobs.add(job(BASE_JOB_NAME + "longer-id", "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+
+            BatchService.discardPreviousJob(runContext, client(endpoint, runContext), BASE_JOB_NAME + "other", Duration.ofSeconds(10), Duration.ofMillis(10));
+            BatchService.discardPreviousJob(runContext, client(endpoint, runContext), BASE_JOB_NAME + "long", Duration.ofSeconds(10), Duration.ofMillis(10));
+
+            assertTrue(endpoint.deleted.isEmpty());
+        }
+    }
+
+    @Test
+    void failsWithAClearMessageWhenThePreviousJobIsNeverDeleted() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var id = BASE_JOB_NAME + "a";
+            endpoint.jobs.add(job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.deleteLag = Integer.MAX_VALUE / 2;
+
+            var e = assertThrows(IllegalStateException.class, () ->
+                BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofMillis(200), Duration.ofMillis(20)));
+
+            assertTrue(e.getMessage().contains(id));
+        }
+    }
+
+    @Test
+    void doesNotDeleteAJobThatIsAlreadyBeingDeleted() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var id = BASE_JOB_NAME + "a";
+            var deleting = job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of()));
+            deleting.put("state", "deleting");
+            endpoint.jobs.add(deleting);
+            // the job disappears by itself after two polls
+            endpoint.vanishAfterPolls(id, 2);
+
+            BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10));
+
+            assertTrue(endpoint.deleted.isEmpty(), "no delete request for a job already being deleted");
+        }
+    }
+
+    @Test
+    void ignoresAConflictOrNotFoundOnDeleteAndKeepsWaiting() throws Exception {
+        for (var code : List.of("JobBeingDeleted", "JobNotFound")) {
+            try (var endpoint = new FakeJobList()) {
+                var runContext = runContext(endpoint);
+                var id = BASE_JOB_NAME + "a";
+                endpoint.jobs.add(job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+                endpoint.deleteStatus = "JobNotFound".equals(code) ? 404 : 409;
+                endpoint.deleteCode = code;
+                endpoint.vanishAfterPolls(id, 1);
+
+                BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10));
+
+                assertEquals(List.of(id), endpoint.deleted, code);
+            }
+        }
+    }
+
+    @Test
+    void passesUpAnyOtherErrorOnDelete() throws Exception {
+        try (var endpoint = new FakeJobList()) {
+            var runContext = runContext(endpoint);
+            var id = BASE_JOB_NAME + "a";
+            endpoint.jobs.add(job(id, "2026-01-01T00:00:00Z", labels(runContext, Map.of())));
+            endpoint.deleteStatus = 403;
+            endpoint.deleteCode = "AuthenticationFailed";
+
+            assertThrows(BatchErrorException.class, () ->
+                BatchService.discardPreviousJob(runContext, client(endpoint, runContext), id, Duration.ofSeconds(10), Duration.ofMillis(10)));
+        }
+    }
+
+    private Optional<CloudJob> resumable(FakeJobList endpoint, RunContext runContext) throws Exception {
+        return BatchService.findResumableJob(runContext, client(endpoint, runContext), BASE_JOB_NAME);
+    }
+
+    private static Map<String, Object> task(String state, String result) {
+        var task = new HashMap<String, Object>();
+        task.put("id", "task-" + state);
+        task.put("state", state);
+        if (result != null) {
+            task.put("executionInfo", Map.of("result", result, "retryCount", 0, "requeueCount", 0));
+        }
+        return task;
+    }
+
     private RunContext runContext(FakeJobList endpoint) {
         return runContext(endpoint, 1);
     }
@@ -145,6 +346,7 @@ class BatchServiceResumeTest {
         var job = new HashMap<String, Object>();
         job.put("id", id);
         job.put("creationTime", creationTime);
+        job.put("state", "active");
         if (metadata != null) {
             job.put("metadata", metadata.entrySet().stream()
                 .map(entry -> Map.of("name", entry.getKey(), "value", entry.getValue()))
@@ -157,21 +359,80 @@ class BatchServiceResumeTest {
         private final HttpServer server;
         private final List<Map<String, Object>> jobs = new CopyOnWriteArrayList<>();
         private final List<String> queries = new CopyOnWriteArrayList<>();
+        private final Map<String, List<Map<String, Object>>> tasks = new ConcurrentHashMap<>();
+        private final List<String> deleted = new CopyOnWriteArrayList<>();
+        private final List<String> goneTasks = new CopyOnWriteArrayList<>();
+        private final Map<String, Integer> lingering = new ConcurrentHashMap<>();
+        private final Map<String, Integer> vanishing = new ConcurrentHashMap<>();
+        private int deleteLag = 0;
+        private int deleteStatus = 202;
+        private String deleteCode = null;
         private BatchClient client;
 
         private FakeJobList() throws IOException {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext("/jobs", exchange -> {
-                var query = exchange.getRequestURI().getRawQuery();
-                queries.add(query == null ? "" : URLDecoder.decode(query, StandardCharsets.UTF_8));
-                var body = JacksonMapper.ofJson().writeValueAsBytes(Map.of("value", jobs));
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
-                exchange.sendResponseHeaders(200, body.length);
-                try (var response = exchange.getResponseBody()) {
-                    response.write(body);
+                var path = exchange.getRequestURI().getPath();
+                List<Map<String, Object>> value = jobs;
+                var single = path.length() > "/jobs/".length() && !path.endsWith("/tasks");
+                if (single) {
+                    var jobId = path.substring("/jobs/".length());
+                    if (exchange.getRequestMethod().equals("DELETE")) {
+                        deleted.add(jobId);
+                        if (deleteStatus >= 400) {
+                            var body = ("{\"code\":\"" + deleteCode + "\",\"message\":{\"lang\":\"en-US\",\"value\":\"no\"}}").getBytes(StandardCharsets.UTF_8);
+                            send(exchange, deleteStatus, body);
+                            return;
+                        }
+                        lingering.put(jobId, deleteLag);
+                        send(exchange, 202, new byte[0]);
+                        return;
+                    }
+                    var gone = (deleted.contains(jobId) && lingering.merge(jobId, -1, Integer::sum) < 0)
+                        || (vanishing.containsKey(jobId) && vanishing.merge(jobId, -1, Integer::sum) < 0);
+                    var found = gone ? null : jobs.stream().filter(job -> jobId.equals(job.get("id"))).findFirst().orElse(null);
+                    if (found == null) {
+                        var body = "{\"code\":\"JobNotFound\",\"message\":{\"lang\":\"en-US\",\"value\":\"gone\"}}".getBytes(StandardCharsets.UTF_8);
+                        send(exchange, 404, body);
+                    } else {
+                        send(exchange, 200, JacksonMapper.ofJson().writeValueAsBytes(found));
+                    }
+                    return;
                 }
+                if (path.endsWith("/tasks")) {
+                    var jobId = path.substring("/jobs/".length(), path.length() - "/tasks".length());
+                    if (goneTasks.contains(jobId)) {
+                        var body = "{\"code\":\"JobNotFound\",\"message\":{\"lang\":\"en-US\",\"value\":\"gone\"}}".getBytes(StandardCharsets.UTF_8);
+                        send(exchange, 404, body);
+                        return;
+                    }
+                    value = tasks.getOrDefault(jobId, List.of());
+                } else {
+                    var query = exchange.getRequestURI().getRawQuery();
+                    var decoded = query == null ? "" : URLDecoder.decode(query, StandardCharsets.UTF_8);
+                    queries.add(decoded);
+                    // honor the startswith(id, 'prefix') filter like Batch does
+                    var matcher = STARTSWITH.matcher(decoded);
+                    if (matcher.find()) {
+                        var prefix = matcher.group(1);
+                        value = jobs.stream().filter(job -> String.valueOf(job.get("id")).startsWith(prefix)).toList();
+                    }
+                }
+                send(exchange, 200, JacksonMapper.ofJson().writeValueAsBytes(Map.of("value", value)));
             });
             server.start();
+        }
+
+        private void vanishAfterPolls(String jobId, int polls) {
+            vanishing.put(jobId, polls);
+        }
+
+        private static void send(HttpExchange exchange, int status, byte[] body) throws IOException {
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, body.length == 0 ? -1 : body.length);
+            try (var response = exchange.getResponseBody()) {
+                response.write(body);
+            }
         }
 
         private String url() {

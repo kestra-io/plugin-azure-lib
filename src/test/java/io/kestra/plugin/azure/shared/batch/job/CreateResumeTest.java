@@ -18,6 +18,7 @@ import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -81,6 +82,43 @@ class CreateResumeTest {
     }
 
     @Test
+    void deletesAJobOfAnEarlierAttemptThatCannotBeResumedBeforeCreatingANewOne() throws Exception {
+        try (var endpoint = new FakeBatch()) {
+            var runContext = runContext(2);
+            var firstAttempt = runContext(1);
+            var create = create(endpoint, "myjob");
+            var completed = new HashMap<>(job("myjob", create, firstAttempt));
+            completed.put("state", "completed");
+            endpoint.jobs("startswith(id, 'myjob')", completed);
+
+            // the fake endpoint has no reply for job creation, so creating the new job fails
+            assertThrows(Exception.class, () -> create.run(runContext));
+
+            assertEquals(1, endpoint.requests("DELETE", "/jobs/myjob").size(), "the old job owning the id is deleted");
+            assertEquals(1, endpoint.requests("POST", "/jobs").size(), "a new job is created under the same id");
+        }
+    }
+
+    @Test
+    void doesNotDeleteAnythingWhenResumeIsDisabled() throws Exception {
+        try (var endpoint = new FakeBatch()) {
+            var runContext = runContext(2);
+            var firstAttempt = runContext(1);
+            var create = create(endpoint, "myjob", false);
+            var completed = new HashMap<>(job("myjob", create, firstAttempt));
+            completed.put("state", "completed");
+            endpoint.jobs("startswith(id, 'myjob')", completed);
+
+            // the fake endpoint has no reply for job creation, so creating the new job fails
+            assertThrows(Exception.class, () -> create.run(runContext));
+
+            assertTrue(endpoint.requests("DELETE", "/jobs/myjob").isEmpty(), "nothing is deleted");
+            assertTrue(endpoint.requests("GET", "/jobs/myjob").isEmpty(), "no lookup of the previous job");
+            assertEquals(1, endpoint.requests("POST", "/jobs").size());
+        }
+    }
+
+    @Test
     void resumesATaskRunnerJobWithAnotherSuffix() throws Exception {
         try (var endpoint = new FakeBatch()) {
             var runContext = runContext(2);
@@ -99,7 +137,12 @@ class CreateResumeTest {
     }
 
     private Create create(FakeBatch endpoint, String jobId) {
+        return create(endpoint, jobId, true);
+    }
+
+    private Create create(FakeBatch endpoint, String jobId, boolean resume) {
         return Create.builder()
+            .resume(Property.ofValue(resume))
             .id("create")
             .type(Create.class.getName())
             .endpoint(Property.ofValue(endpoint.url()))
@@ -132,6 +175,7 @@ class CreateResumeTest {
         return Map.of(
             "id", id,
             "creationTime", "2026-01-01T00:00:00Z",
+            "state", "active",
             "metadata", created.metadata().stream().map(item -> Map.of("name", item.name(), "value", item.value())).toList()
         );
     }

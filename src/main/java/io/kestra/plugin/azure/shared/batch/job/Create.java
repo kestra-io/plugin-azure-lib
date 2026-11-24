@@ -126,9 +126,11 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
         Logger logger = runContext.logger();
         BatchClient client = BatchService.client(this.endpoint, this.account, this.accessKey, runContext);
 
+        boolean rResume = runContext.render(resume).as(Boolean.class).orElse(true);
+
         Map<String, Integer> tasksMapping = new HashMap<>();
         String jobId = null;
-        if (Boolean.TRUE.equals(runContext.render(resume).as(Boolean.class).orElseThrow())) {
+        if (rResume) {
             var cloudJob = BatchService.findResumableJob(runContext, client, runContext.render(this.job.getId()));
             if (cloudJob.isPresent()) {
                 jobId = cloudJob.get().id();
@@ -152,6 +154,10 @@ public class Create extends AbstractBatch implements RunnableTask<Create.Output>
 
                 final JobAddParameter job = this.job.to(runContext, poolInfo);
                 jobId = job.id();
+                if (rResume) {
+                    // a job of an earlier attempt that cannot be resumed still owns this id
+                    BatchService.discardPreviousJob(runContext, client, jobId);
+                }
                 client.jobOperations().createJob(job);
 
                 logger.info("Job '{}' created on pool '{}'", jobId, poolInfo.poolId());
