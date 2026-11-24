@@ -6,6 +6,7 @@ import com.microsoft.azure.batch.protocol.models.PoolInformation;
 import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.models.annotations.PluginProperty;
 import io.kestra.core.models.property.Property;
+import io.kestra.core.models.tasks.runners.ScriptService;
 import io.kestra.core.runners.RunContext;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
@@ -14,6 +15,7 @@ import lombok.Value;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Builder
@@ -52,12 +54,19 @@ public class Job {
 
     @Schema(
         title = "Job labels",
-        description = "Key/value metadata applied to the job"
+        description = """
+            Key/value metadata applied to the job.
+            Kestra always adds its run labels prefixed with `kestra-` (namespace, flow, task, execution, task run and attempt),
+            which are used to resume the job and take precedence over user labels with the same key."""
     )
     @PluginProperty(group = "advanced")
     private Property<Map<String, String>> labels;
 
     public JobAddParameter to(RunContext runContext, PoolInformation poolInformation) throws IllegalVariableEvaluationException {
+        var metadata = new LinkedHashMap<>(runContext.render(this.labels).asMap(String.class, String.class));
+        // run labels go last so user labels can't override them: BatchService.getExistingJob needs them to resume the job
+        metadata.putAll(ScriptService.labels(runContext, "kestra-", true, true));
+
         return new JobAddParameter()
             .withId(runContext.render(this.id))
             .withDisplayName(runContext.render(this.displayName))
@@ -65,8 +74,7 @@ public class Job {
             .withMaxParallelTasks(runContext.render(this.maxParallelTasks).as(Integer.class).orElse(null))
             .withPoolInfo(poolInformation)
             .withMetadata(
-                runContext.render(this.labels).asMap(String.class, String.class)
-                    .entrySet()
+                metadata.entrySet()
                     .stream()
                     .map(e -> new MetadataItem().withName(e.getKey()).withValue(e.getValue()))
                     .toList()

@@ -40,24 +40,40 @@ public class BatchService {
         return BatchClient.open(restClient, credentials.baseUrl());
     }
 
+    private static final String ATTEMPT_LABEL = "kestra-taskrun-attempt";
+
+    /**
+     * Finds the job of an earlier attempt of the current task run, so a retried task can resume it.
+     * The job keeps the id the user gave it, so that id is looked up first. Jobs created by the task runner
+     * get a new random suffix on each attempt, so the generated job name prefix is looked up next.
+     */
+    public static Optional<CloudJob> findResumableJob(RunContext runContext, BatchClient client, String jobId) throws IOException {
+        var cloudJob = getExistingJob(runContext, client, jobId);
+        if (cloudJob.isPresent()) {
+            return cloudJob;
+        }
+
+        var jobName = ScriptService.jobName(runContext);
+        return getExistingJob(runContext, client, jobName.substring(0, jobName.lastIndexOf('-') + 1));
+    }
+
     public static Optional<CloudJob> getExistingJob(RunContext runContext, BatchClient client, String baseJobName) throws IOException {
+        var resumeLabels = new HashMap<>(ScriptService.labels(runContext, "kestra-", true, true));
+        // a resumed task runs under a new attempt, so a job created by an earlier attempt must still match
+        resumeLabels.remove(ATTEMPT_LABEL);
         var listJobsResponse = client.jobOperations().listJobs(new DetailLevel.Builder().withFilterClause("startswith(id, '" + baseJobName + "')").build());
         return listJobsResponse.stream()
-            .filter(cloudJob -> hasAllLabels(runContext, cloudJob.metadata()))
+            .filter(cloudJob -> hasAllLabels(resumeLabels, cloudJob.metadata()))
             .min((cloudJob1, cloudJob2) -> -cloudJob1.creationTime().compareTo(cloudJob2.creationTime()));
     }
 
-    private static boolean hasAllLabels(RunContext runContext, List<MetadataItem> metadata) {
-        Map<String, String> labels = ScriptService.labels(runContext, "kestra-", true, true);
-        var resumeLabel = new HashMap<>(labels);
-        resumeLabel.remove("kestra-taskrun-attempt"); // job resubmission will create a new attempt
-        for (MetadataItem metadataItem : metadata) {
-            String value = resumeLabel.get(metadataItem.name());
-            if (value == null || !value.equals(metadataItem.value())) {
-                return false;
-            }
+    private static boolean hasAllLabels(Map<String, String> resumeLabels, List<MetadataItem> metadata) {
+        if (metadata == null) {
+            return false;
         }
-        return true;
+        var jobLabels = new HashMap<String, String>();
+        metadata.forEach(item -> jobLabels.put(item.name(), item.value()));
+        return resumeLabels.entrySet().stream().allMatch(label -> label.getValue().equals(jobLabels.get(label.getKey())));
     }
 
     private static final class BatchResponseBuilderFactory implements ResponseBuilder.Factory {
